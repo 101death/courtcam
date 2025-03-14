@@ -1,107 +1,243 @@
-def detect_court_lines(frame, court_roi_info, court_roi, court_mask_roi):
-    if court_roi is None or court_roi.shape[0] == 0 or court_roi.shape[1] == 0:
-        print("Court ROI is invalid or empty.")
-        return frame, []
+import cv2
+import numpy as np
+import sys
+import os
+import json
+from ultralytics import YOLO
+from PIL import Image
 
-    roi_x, roi_y, roi_w, roi_h = court_roi_info
-    hsv_roi = cv2.cvtColor(court_roi, cv2.COLOR_BGR2HSV)
-    lower_white, upper_white = WHITE_LINE_COLOR
-    white_mask = cv2.inRange(hsv_roi, np.array(lower_white), np.array(upper_white))
-    
-    # Morphological cleaning and enhancement
-    kernel = np.ones((3, 3), np.uint8)
-    white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel)
-    white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN, kernel)
-    white_mask = cv2.bilateralFilter(white_mask, 9, 75, 75)
-    white_mask = cv2.dilate(white_mask, np.ones((5, 5), np.uint8), iterations=1)
-    
-    # Use adaptive thresholding for better edge extraction
-    adaptive_thresh = cv2.adaptiveThreshold(white_mask, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                            cv2.THRESH_BINARY, 11, 2)
-    edges = cv2.Canny(adaptive_thresh, config["canny_threshold1"], config["canny_threshold2"])
-    
-    # Option 1: Probabilistic Hough Transform
-    lines = cv2.HoughLinesP(edges, 1, np.pi/180, config["hough_threshold"], 
-                            minLineLength=config["min_line_length"], 
-                            maxLineGap=config["max_line_gap"])
-    
-    # Option 2: Alternatively, use LSD
-    # lsd = cv2.createLineSegmentDetector(0)
-    # lines_lsd, _, _, _ = lsd.detect(white_mask)
-    # lines = np.array([[[int(x1), int(y1), int(x2), int(y2)]] for [[x1, y1, x2, y2]] in lines_lsd]) if lines_lsd is not None else None
-    
-    # Process detected lines as before, categorizing horizontal/vertical, etc.
-    horizontal_lines = []
-    vertical_lines = []
-    all_lines = []
-    top_line = bottom_line = left_line = right_line = None
+# ------------------- Load Config -------------------
+def load_config(config_path="config.json"):
+    """
+    Loads a simple JSON config or uses fallback defaults.
+    """
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error reading config.json: {e}")
+            sys.exit(1)
+    else:
+        # Fallback config if file not found
+        return {
+            "court": {
+                "inside_color": "blue",
+                "line_color": "white"
+            },
+            "processing": {},
+            "yolo": {
+                "model_path": "yolov8n.pt"
+            }
+        }
 
-    if lines is not None:
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-            if x1 > x2:
-                x1, y1, x2, y2 = x2, y2, x1, y1
-            angle = np.abs(np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi)
-            length = np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
-            line_info = {'points': (x1, y1, x2, y2), 'angle': angle, 'length': length,
-                         'y_avg': (y1 + y2) / 2, 'x_avg': (x1 + x2) / 2}
-            if angle < 30 or angle > 150:
-                horizontal_lines.append(line_info)
-            elif 60 < angle < 120:
-                vertical_lines.append(line_info)
-            all_lines.append(line_info)
-        
-        # Process horizontal lines
-        if horizontal_lines:
-            horizontal_lines.sort(key=lambda x: x['length'], reverse=True)
-            max_length = horizontal_lines[0]['length']
-            long_h_lines = [l for l in horizontal_lines if l['length'] > 0.5 * max_length]
-            long_h_lines.sort(key=lambda x: x['y_avg'])
-            top_line = long_h_lines[0]['points']
-            if len(long_h_lines) > 1:
-                bottom_line = long_h_lines[-1]['points']
-        
-        # Process vertical lines
-        if vertical_lines:
-            vertical_lines.sort(key=lambda x: x['length'], reverse=True)
-            max_length = vertical_lines[0]['length']
-            long_v_lines = [l for l in vertical_lines if l['length'] > 0.5 * max_length]
-            long_v_lines.sort(key=lambda x: x['x_avg'])
-            left_line = long_v_lines[0]['points']
-            if len(long_v_lines) > 1:
-                right_line = long_v_lines[-1]['points']
+# ------------------- Read Image -------------------
+def read_image(image_path):
+    """
+    Reads an image using OpenCV. Converts AVIF to PNG if needed.
+    """
+    if not os.path.exists(image_path):
+        print(f"Error: Input image '{image_path}' does not exist!")
+        sys.exit(1)
     
-    # Create an overlay for drawing
-    boundary_image = np.zeros_like(court_roi)
-    court_boundary_points = []
+    if image_path.lower().endswith(".avif"):
+        try:
+            avif_image = Image.open(image_path)
+            converted_path = "converted_image.png"
+            avif_image.save(converted_path, format="PNG")
+            image_path = converted_path
+        except Exception as e:
+            print(f"Error converting AVIF: {e}")
+            sys.exit(1)
     
-    if top_line:
-        cv2.line(boundary_image, (top_line[0], top_line[1]), (top_line[2], top_line[3]), (0, 255, 0), config["line_thickness"])
-        court_boundary_points += [(top_line[0] + roi_x, top_line[1] + roi_y), (top_line[2] + roi_x, top_line[3] + roi_y)]
-    if bottom_line:
-        cv2.line(boundary_image, (bottom_line[0], bottom_line[1]), (bottom_line[2], bottom_line[3]), (0, 255, 0), config["line_thickness"])
-        court_boundary_points += [(bottom_line[0] + roi_x, bottom_line[1] + roi_y), (bottom_line[2] + roi_x, bottom_line[3] + roi_y)]
-    if left_line:
-        cv2.line(boundary_image, (left_line[0], left_line[1]), (left_line[2], left_line[3]), (0, 0, 255), config["line_thickness"])
-        court_boundary_points += [(left_line[0] + roi_x, left_line[1] + roi_y), (left_line[2] + roi_x, left_line[3] + roi_y)]
-    if right_line:
-        cv2.line(boundary_image, (right_line[0], right_line[1]), (right_line[2], right_line[3]), (0, 0, 255), config["line_thickness"])
-        court_boundary_points += [(right_line[0] + roi_x, right_line[1] + roi_y), (right_line[2] + roi_x, right_line[3] + roi_y)]
+    img = cv2.imread(image_path)
+    if img is None:
+        print(f"Error: Could not load image '{image_path}'!")
+        sys.exit(1)
+    return img
+
+# ------------------- Court Mask -------------------
+def create_court_mask(image, inside_color):
+    """
+    Creates a binary mask for the court color (blue/green/red).
+    Adjust HSV or morphological parameters as needed.
+    """
+    # Default HSV ranges (tweak as needed)
+    COLOR_RANGES = {
+        "blue": ([90, 50, 50], [130, 255, 255]),
+        "green": ([35, 50, 50], [85, 255, 255]),
+        "red": ([0, 50, 50], [10, 255, 255])
+    }
     
-    # Optionally, connect the estimated corners
-    if top_line and bottom_line and left_line and right_line:
-        top_left = (left_line[0], top_line[1])
-        top_right = (right_line[0], top_line[1])
-        bottom_left = (left_line[0], bottom_line[1])
-        bottom_right = (right_line[0], bottom_line[1])
-        cv2.line(boundary_image, top_left, top_right, (255, 0, 0), config["line_thickness"])
-        cv2.line(boundary_image, bottom_left, bottom_right, (255, 0, 0), config["line_thickness"])
-        cv2.line(boundary_image, top_left, bottom_left, (255, 0, 0), config["line_thickness"])
-        cv2.line(boundary_image, top_right, bottom_right, (255, 0, 0), config["line_thickness"])
+    lower_hsv, upper_hsv = COLOR_RANGES.get(inside_color, COLOR_RANGES["blue"])
     
-    lines_detected = cv2.addWeighted(court_roi, 1, boundary_image, 1, 0)
-    frame[roi_y:roi_y+roi_h, roi_x:roi_x+roi_w] = lines_detected
-    cv2.putText(frame, "Tennis Court Boundary", (roi_x, roi_y - 10), 
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 165, 0), 2)
+    # Convert to HSV and apply threshold
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, np.array(lower_hsv), np.array(upper_hsv))
     
-    return frame, court_boundary_points
+    # Morphological operations (hardcoded defaults)
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    
+    return mask
+
+# ------------------- Court Detection -------------------
+def detect_largest_court_contour(mask):
+    """
+    Finds the largest contour in the mask. We assume it's the court.
+    Returns the contour if found, else None.
+    """
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    
+    max_contour = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(max_contour) < 5000:  # Arbitrary min area
+        return None
+    return max_contour
+
+def approximate_polygon(contour):
+    """
+    Approximates a polygon from the largest contour.
+    """
+    epsilon = 0.02 * cv2.arcLength(contour, True)
+    approx = cv2.approxPolyDP(contour, epsilon, True)
+    return approx
+
+# ------------------- Gradient Overlay -------------------
+def apply_gradient_overlay(image, poly, max_alpha=0.6):
+    """
+    Applies a vertical gradient overlay to the bounding rectangle of the polygon.
+    """
+    if poly is None or len(poly) < 3:
+        return image
+    
+    x, y, w, h = cv2.boundingRect(poly)
+    x_end = min(x + w, image.shape[1])
+    y_end = min(y + h, image.shape[0])
+    
+    # Extract region of interest
+    roi = image[y:y_end, x:x_end].copy().astype(np.float32)
+    overlay = np.zeros_like(roi, dtype=np.float32)
+    
+    # Create gradient from top (0) to bottom (max_alpha)
+    height = roi.shape[0]
+    width = roi.shape[1]
+    grad = np.tile(np.linspace(0, max_alpha, height).reshape(-1, 1), (1, width))
+    grad = np.repeat(grad[:, :, np.newaxis], 3, axis=2)
+    
+    blended = roi * (1 - grad) + overlay * grad
+    image[y:y_end, x:x_end] = blended.astype(np.uint8)
+    return image
+
+# ------------------- YOLO Detection -------------------
+def detect_people_yolo(image, model_path="yolov8n.pt", conf_thresh=0.5):
+    """
+    Detects people in the image using YOLOv8.
+    Returns a list of bounding boxes [x1, y1, x2, y2, confidence].
+    """
+    model = YOLO(model_path)
+    results = model(image)
+    boxes_out = []
+    
+    for r in results:
+        boxes = r.boxes
+        for box in boxes:
+            cls_id = int(box.cls[0])
+            if cls_id == 0:  # 'person'
+                conf = float(box.conf[0])
+                if conf >= conf_thresh:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    boxes_out.append([x1, y1, x2, y2, conf])
+    return boxes_out
+
+# ------------------- Check if Inside Court -------------------
+def is_person_inside_court(x1, y1, x2, y2, polygon):
+    """
+    Uses the bottom-center (feet) of the bounding box to determine if inside the polygon.
+    """
+    if polygon is None or len(polygon) < 3:
+        return False
+    px = x1 + (x2 - x1) // 2
+    py = y2  # feet position
+    # Reshape polygon to Nx2 if needed
+    pts = polygon.reshape(-1, 2)
+    result = cv2.pointPolygonTest(pts, (px, py), False)
+    return result >= 0
+
+# ------------------- Main Script -------------------
+def main():
+    if len(sys.argv) < 3:
+        print("Usage: python main.py <input_image> <output_image>")
+        sys.exit(1)
+    
+    input_image_path = sys.argv[1]
+    output_image_path = sys.argv[2]
+    
+    # Load config
+    config = load_config("config.json")
+    
+    # Read image
+    original_img = read_image(input_image_path)
+    annotated_img = original_img.copy()
+    
+    # Court color from config
+    inside_color = config["court"].get("inside_color", "blue")
+    # YOLO model path from config
+    model_path = config["yolo"].get("model_path", "yolov8n.pt")
+    
+    # 1. Create mask for the court color
+    court_mask = create_court_mask(original_img, inside_color)
+    
+    # 2. Find largest contour
+    court_contour = detect_largest_court_contour(court_mask)
+    if court_contour is None:
+        print("No court contour found.")
+        cv2.imwrite(output_image_path, annotated_img)
+        return
+    
+    # 3. Approximate polygon
+    court_poly = approximate_polygon(court_contour)
+    
+    # 4. Draw polygon (in white, from config)
+    line_color = config["court"].get("line_color", "white")
+    # Convert color name to BGR if needed, here we assume white => (255,255,255)
+    color_map = {
+        "white": (255, 255, 255),
+        "blue": (255, 0, 0),
+        "green": (0, 255, 0),
+        "red": (0, 0, 255)
+    }
+    bgr_line_color = color_map.get(line_color, (255, 255, 255))
+    cv2.polylines(annotated_img, [court_poly], True, bgr_line_color, 2)
+    
+    # 5. Apply gradient overlay to bounding rectangle of the court polygon
+    annotated_img = apply_gradient_overlay(annotated_img, court_poly, max_alpha=0.6)
+    
+    # 6. Detect people with YOLO
+    people_boxes = detect_people_yolo(original_img, model_path=model_path, conf_thresh=0.5)
+    
+    # 7. Check if each person is inside the court
+    court_occupied = 0
+    total_people = 0
+    for (x1, y1, x2, y2, conf) in people_boxes:
+        total_people += 1
+        inside = is_person_inside_court(x1, y1, x2, y2, court_poly)
+        if inside:
+            court_occupied = 1
+        color = (0, 255, 0) if inside else (0, 0, 255)
+        cv2.rectangle(annotated_img, (x1, y1), (x2, y2), color, 2)
+        label = "Inside Court" if inside else "Outside Court"
+        cv2.putText(annotated_img, label, (x1, max(y1 - 5, 0)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+    
+    # 8. Save output
+    cv2.imwrite(output_image_path, annotated_img)
+    
+    # 9. Print results
+    print(f"Court Occupied: {court_occupied}")
+    print(f"Total People Detected: {total_people}")
+
+if __name__ == "__main__":
+    main()

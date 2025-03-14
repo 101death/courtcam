@@ -1,0 +1,11 @@
+{
+    "court": {
+      "inside_color": "blue",
+      "line_color": "white"
+    },
+    "processing": {},
+    "yolo": {
+      "model_path": "yolov8n.pt"
+    }
+  }
+  
