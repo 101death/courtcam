@@ -1,388 +1,263 @@
 import cv2
 import numpy as np
-import sys
-import os
 import json
-from ultralytics import YOLO
-from PIL import Image
+import os
+import urllib.request
+import certifi
+import ssl
 
-# ------------------- Load Config -------------------
-def load_config(config_path="config.json"):
-    """
-    Loads a simple JSON config or uses fallback defaults.
-    """
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, "r") as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Error reading config.json: {e}")
-            sys.exit(1)
-    else:
-        # Fallback config if file not found
-        return {
-            "court": {
-                "inside_color": "blue",
-                "line_color": "white"
-            },
-            "processing": {},
-            "yolo": {
-                "model_path": "yolov8n.pt"
-            }
-        }
+# Terminal styling functions
+def print_header(text):
+    print(f"\n{'=' * 50}\n{text.center(50)}\n{'=' * 50}")
 
-# ------------------- Read Image -------------------
-def read_image(image_path):
-    """
-    Reads an image using OpenCV. Converts AVIF to PNG if needed.
-    """
-    if not os.path.exists(image_path):
-        print(f"Error: Input image '{image_path}' does not exist!")
-        sys.exit(1)
-    
-    if image_path.lower().endswith(".avif"):
-        try:
-            avif_image = Image.open(image_path)
-            converted_path = "converted_image.png"
-            avif_image.save(converted_path, format="PNG")
-            image_path = converted_path
-        except Exception as e:
-            print(f"Error converting AVIF: {e}")
-            sys.exit(1)
-    
-    img = cv2.imread(image_path)
-    if img is None:
-        print(f"Error: Could not load image '{image_path}'!")
-        sys.exit(1)
-    return img
+def print_step(text):
+    print(f"[+] {text}")
 
-# ------------------- Court Mask -------------------
-def create_court_mask(image, inside_color):
-    """
-    Creates a binary mask for the court color (blue/green/red).
-    Improved with adaptive thresholding and multiple color ranges for detection.
-    """
-    # Enhanced HSV ranges for better court detection
-    COLOR_RANGES = {
-        "blue": [
-            ([90, 50, 50], [130, 255, 255]),   # Standard blue
-            ([100, 40, 40], [140, 255, 255]),  # Darker blue variation
-            ([80, 40, 40], [110, 255, 255])    # Lighter blue variation
-        ],
-        "green": [
-            ([35, 50, 50], [85, 255, 255]),    # Standard green
-            ([30, 40, 40], [90, 255, 255]),    # Wider green range
-            ([40, 30, 40], [80, 255, 255])     # Another green variation
-        ],
-        "red": [
-            ([0, 50, 50], [10, 255, 255]),     # Lower red hue
-            ([160, 50, 50], [180, 255, 255]),  # Upper red hue (red wraps around)
-            ([0, 40, 40], [20, 255, 255])      # Wider lower red
-        ]
+def print_error(text):
+    print(f"[ERROR] {text}")
+
+def print_success(text):
+    print(f"[SUCCESS] {text}")
+
+# Function to ensure model files are present
+def ensure_model_files():
+    files = {
+        'yolov3.cfg': 'https://raw.githubusercontent.com/pjreddie/darknet/master/cfg/yolov3.cfg',
+        'coco.names': 'https://raw.githubusercontent.com/pjreddie/darknet/master/data/coco.names',
+        'yolov3.weights': 'https://pjreddie.com/media/files/yolov3.weights'
     }
-    
-    color_ranges = COLOR_RANGES.get(inside_color, COLOR_RANGES["blue"])
-    
-    # Convert to HSV
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    
-    # Create combined mask from all ranges for the given color
-    combined_mask = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
-    
-    for lower_hsv, upper_hsv in color_ranges:
-        mask = cv2.inRange(hsv, np.array(lower_hsv), np.array(upper_hsv))
-        combined_mask = cv2.bitwise_or(combined_mask, mask)
-    
-    # Improved morphological operations with adaptive kernel size
-    height, width = image.shape[:2]
-    kernel_size = max(5, min(15, int(min(height, width) / 100)))
-    kernel = np.ones((kernel_size, kernel_size), np.uint8)
-    
-    # Close operation to fill small holes
-    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel)
-    
-    # Open operation to remove small noise
-    smaller_kernel = np.ones((kernel_size//2, kernel_size//2), np.uint8)
-    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, smaller_kernel)
-    
-    return combined_mask
+    for filename, url in files.items():
+        if not os.path.exists(filename):
+            print_step(f"{filename} not found. Downloading from {url}...")
+            try:
+                context = ssl.create_default_context(cafile=certifi.where())
+                with urllib.request.urlopen(url, context=context) as response:
+                    with open(filename, 'wb') as out_file:
+                        out_file.write(response.read())
+                print_success(f"Downloaded {filename} successfully.")
+            except Exception as e:
+                print_error(f"Failed to download {filename}: {e}")
+                print_error("Please check your internet connection and try again.")
+                exit(1)
 
-# ------------------- Court Detection -------------------
-def detect_largest_court_contour(mask):
-    """
-    Finds the largest contour in the mask that matches court aspect ratio.
-    Returns the contour if found, else None.
-    """
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return None
+# Function to detect court using multiple color ranges
+def detect_court(image, config, advanced_config):
+    print_step("Detecting tennis court using advanced line detection and AI methods...")
     
-    # Sort contours by area, largest first
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)
+    # Get the court color from config
+    court_color = config['court_color']
+    width_flexibility = config['width_flexibility']
+    length_flexibility = config['length_flexibility']
     
-    # Try to find a contour with reasonable court aspect ratio
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area < 5000:  # Skip too small contours
-            continue
-            
-        # Check if the contour has a reasonable aspect ratio for a tennis court
-        x, y, w, h = cv2.boundingRect(contour)
-        aspect_ratio = float(w) / h if h > 0 else 0
-        
-        # Tennis courts typically have an aspect ratio around 1.8-2.4 (length/width)
-        # Be a bit lenient with the range
-        if 1.5 <= aspect_ratio <= 3.0 or 0.33 <= aspect_ratio <= 0.67:
-            return contour
+    # Get output folder from config
+    output_folder = config['output_folder']
+    os.makedirs(output_folder, exist_ok=True)
     
-    # If no contour with proper aspect ratio found, return the largest one
-    if contours:
-        return contours[0]
-    
-    return None
-
-def approximate_polygon(contour):
-    """
-    Approximates a polygon from the largest contour with dynamic epsilon.
-    """
-    if contour is None:
-        return None
-        
-    perimeter = cv2.arcLength(contour, True)
-    # Dynamic epsilon calculation based on perimeter
-    epsilon = 0.02 * perimeter
-    approx = cv2.approxPolyDP(contour, epsilon, True)
-    
-    # For tennis courts, we expect 4-6 corners after approximation
-    # If we got too many points, increase epsilon
-    if len(approx) > 8:
-        epsilon = 0.04 * perimeter
-        approx = cv2.approxPolyDP(contour, epsilon, True)
-    
-    return approx
-
-# ------------------- Line Detection -------------------
-def enhance_court_lines(image):
-    """
-    Enhances white lines in the court to improve detection.
-    """
-    # Convert to grayscale
+    # Step 1: Tennis court detection via line segments
+    # First, detect lines which are common in tennis courts
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
-    # Apply adaptive thresholding to find potential lines
-    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                  cv2.THRESH_BINARY, 11, 2)
+    # Apply Gaussian blur to reduce noise
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     
-    # Create a mask of white regions
-    white_mask = cv2.inRange(image, np.array([180, 180, 180]), np.array([255, 255, 255]))
+    # Use Canny edge detector
+    edges = cv2.Canny(blurred, 50, 150)
     
-    # Combine with thresholded image
-    combined = cv2.bitwise_and(thresh, white_mask)
+    # Save edge detection result for debugging
+    cv2.imwrite(os.path.join(output_folder, 'edges.png'), edges)
     
-    # Small kernel for removing noise
-    kernel = np.ones((3, 3), np.uint8)
-    cleaned = cv2.morphologyEx(combined, cv2.MORPH_OPEN, kernel)
+    # Use HoughLinesP to detect line segments
+    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=50, minLineLength=50, maxLineGap=20)
     
-    return cleaned
-
-# ------------------- Court Refinement -------------------
-def refine_court_detection(image, mask, polygon):
-    """
-    Refines court detection by incorporating line detection.
-    """
-    if polygon is None or len(polygon) < 4:
-        return polygon
+    # Create a blank image to draw the detected lines
+    line_image = np.zeros_like(gray)
+    
+    if lines is not None:
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            cv2.line(line_image, (x1, y1), (x2, y2), 255, 2)
+    
+    cv2.imwrite(os.path.join(output_folder, 'line_image.png'), line_image)
+    
+    # Step 2: Combine with color detection
+    # Convert image to HSV
+    hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    
+    # Create a mask for the court based on color
+    color_mask = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
+    
+    # Process inside, outside, and lines court areas
+    for area_type in ['inside', 'outside', 'lines']:
+        if area_type in advanced_config[court_color]:
+            lower_hsv = np.array(advanced_config[court_color][area_type]['lower_hsv'])
+            upper_hsv = np.array(advanced_config[court_color][area_type]['upper_hsv'])
+            
+            # Create mask for this color range
+            area_mask = cv2.inRange(hsv_image, lower_hsv, upper_hsv)
+            
+            # Add to combined mask
+            color_mask = cv2.bitwise_or(color_mask, area_mask)
+    
+    # Save color mask for debugging
+    cv2.imwrite(os.path.join(output_folder, 'color_mask.png'), color_mask)
+    cv2.imwrite(os.path.join(output_folder, 'line_image.png'), line_image)
+    
+    # Since color_mask.png is working well, skip the refinement and just use it directly
+    print_step("Using direct color mask without further processing")
+    
+    # Just for debug information, find the contours in the color mask to report dimensions
+    contours, _ = cv2.findContours(color_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if contours:
+        # Get the largest contour for debugging info
+        largest_contour = max(contours, key=cv2.contourArea)
+        x, y, w, h = cv2.boundingRect(largest_contour)
         
-    # Enhance lines
-    line_mask = enhance_court_lines(image)
+        # Debug information
+        print_step(f"Court detected at: x={x}, y={y}, width={w}, height={h}")
+        print_step(f"Court aspect ratio: {w/h if h > 0 else 0:.2f}")
+    else:
+        print_step("No contours found in the color mask")
     
-    # Use Hough lines to detect straight lines
-    lines = cv2.HoughLinesP(line_mask, 1, np.pi/180, threshold=100,
-                           minLineLength=100, maxLineGap=20)
-                           
-    # If no lines detected, return original polygon
-    if lines is None:
-        return polygon
-        
-    # Draw lines on a blank image
-    h, w = image.shape[:2]
-    line_image = np.zeros((h, w), dtype=np.uint8)
+    # Save the color mask as the final mask for consistency in output
+    cv2.imwrite(os.path.join(output_folder, 'final_mask.png'), color_mask)
     
-    for line in lines:
-        x1, y1, x2, y2 = line[0]
-        cv2.line(line_image, (x1, y1), (x2, y2), 255, 2)
-    
-    # Combine with original mask
-    refined_mask = cv2.bitwise_or(mask, line_image)
-    
-    # Find contours on refined mask
-    contours, _ = cv2.findContours(refined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    if not contours:
-        return polygon
-        
-    largest_contour = max(contours, key=cv2.contourArea)
-    refined_polygon = approximate_polygon(largest_contour)
-    
-    # If refined polygon looks reasonable, use it, otherwise keep original
-    if refined_polygon is not None and 4 <= len(refined_polygon) <= 8:
-        return refined_polygon
-    
-    return polygon
+    # Return the direct color mask as our court detection result
+    return color_mask
 
-# ------------------- Gradient Overlay -------------------
-def apply_gradient_overlay(image, poly, max_alpha=0.6):
-    """
-    Applies a vertical gradient overlay to the bounding rectangle of the polygon.
-    """
-    if poly is None or len(poly) < 3:
-        return image
-    
-    x, y, w, h = cv2.boundingRect(poly)
-    x_end = min(x + w, image.shape[1])
-    y_end = min(y + h, image.shape[0])
-    
-    # Extract region of interest
-    roi = image[y:y_end, x:x_end].copy().astype(np.float32)
-    overlay = np.zeros_like(roi, dtype=np.float32)
-    
-    # Create gradient from top (0) to bottom (max_alpha)
-    height = roi.shape[0]
-    width = roi.shape[1]
-    grad = np.tile(np.linspace(0, max_alpha, height).reshape(-1, 1), (1, width))
-    grad = np.repeat(grad[:, :, np.newaxis], 3, axis=2)
-    
-    blended = roi * (1 - grad) + overlay * grad
-    image[y:y_end, x:x_end] = blended.astype(np.uint8)
-    return image
+# Main script starts here
+print_header("Court Camera Analysis")
 
-# ------------------- YOLO Detection -------------------
-def detect_people_yolo(image, model_path="yolov8n.pt", conf_thresh=0.5):
-    """
-    Detects people in the image using YOLOv8.
-    Returns a list of bounding boxes [x1, y1, x2, y2, confidence].
-    """
-    model = YOLO(model_path)
-    results = model(image)
-    boxes_out = []
-    
-    for r in results:
-        boxes = r.boxes
-        for box in boxes:
-            cls_id = int(box.cls[0])
-            if cls_id == 0:  # 'person'
-                conf = float(box.conf[0])
-                if conf >= conf_thresh:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    boxes_out.append([x1, y1, x2, y2, conf])
-    return boxes_out
+print_step("Ensuring model files are present...")
+ensure_model_files()
+print_success("Model files are ready.")
 
-# ------------------- Check if Inside Court -------------------
-def is_person_inside_court(x1, y1, x2, y2, polygon):
-    """
-    Uses the bottom-center (feet) of the bounding box to determine if inside the polygon.
-    """
-    if polygon is None or len(polygon) < 3:
-        return False
-    px = x1 + (x2 - x1) // 2
-    py = y2  # feet position
-    # Reshape polygon to Nx2 if needed
-    pts = polygon.reshape(-1, 2)
-    result = cv2.pointPolygonTest(pts, (px, py), False)
-    return result >= 0
+# Check for input image
+if not os.path.exists('input.png'):
+    print_error("input.png not found. Please provide the input image.")
+    exit(1)
 
-# ------------------- Main Script -------------------
-def main():
-    if len(sys.argv) < 3:
-        print("Usage: python main.py <input_image> <output_image>")
-        sys.exit(1)
-    
-    input_image_path = sys.argv[1]
-    output_image_path = sys.argv[2]
-    
-    # Load config
-    config = load_config("config.json")
-    
-    # Read image
-    original_img = read_image(input_image_path)
-    annotated_img = original_img.copy()
-    
-    # Get parameters from config
-    inside_color = config["court"].get("inside_color", "blue")
-    model_path = config["yolo"].get("model_path", "yolov8n.pt")
-    
-    # 1. Create mask for the court color
-    court_mask = create_court_mask(original_img, inside_color)
-    
-    # Optional: Save the mask for debugging
-    cv2.imwrite("court_mask.png", court_mask)
-    
-    # 2. Find largest contour
-    court_contour = detect_largest_court_contour(court_mask)
-    if court_contour is None:
-        print("No court contour found.")
-        cv2.imwrite(output_image_path, annotated_img)
-        return
-    
-    # 3. Approximate polygon
-    court_poly = approximate_polygon(court_contour)
-    
-    # 4. Refine court detection using line information
-    refined_poly = refine_court_detection(original_img, court_mask, court_poly)
-    
-    # 5. Draw polygon with VERY noticeable, thick lines
-    # Use bright magenta color for maximum visibility regardless of background
-    court_outline_color = (255, 0, 255)  # Bright magenta in BGR
-    
-    # Draw the main polygon with thick lines (5px)
-    cv2.polylines(annotated_img, [refined_poly], True, court_outline_color, 5)
-    
-    # Add a contrasting outline (yellow) to make it stand out even more
-    cv2.polylines(annotated_img, [refined_poly], True, (0, 255, 255), 2)
-    
-    # 6. Apply gradient overlay to bounding rectangle of the court polygon
-    annotated_img = apply_gradient_overlay(annotated_img, refined_poly, max_alpha=0.6)
-    
-    # 7. Detect people with YOLO
-    people_boxes = detect_people_yolo(original_img, model_path=model_path, conf_thresh=0.5)
-    
-    # 8. Check if each person is inside the court
-    court_occupied = 0
-    total_people = 0
-    for (x1, y1, x2, y2, conf) in people_boxes:
-        total_people += 1
-        inside = is_person_inside_court(x1, y1, x2, y2, refined_poly)
-        if inside:
-            court_occupied = 1
-        color = (0, 255, 0) if inside else (0, 0, 255)
-        cv2.rectangle(annotated_img, (x1, y1), (x2, y2), color, 2)
-        label = f"Inside Court ({conf:.2f})" if inside else f"Outside Court ({conf:.2f})"
-        cv2.putText(annotated_img, label, (x1, max(y1 - 5, 0)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-    
-    # 9. Save output
-    cv2.imwrite(output_image_path, annotated_img)
-    
-    # 10. Save a clean version with ONLY the court polygon
-    court_only_img = original_img.copy()
-    # Draw a very bold, highly visible court outline
-    cv2.polylines(court_only_img, [refined_poly], True, (255, 0, 255), 8)  # Thick magenta
-    cv2.polylines(court_only_img, [refined_poly], True, (0, 255, 255), 3)  # Yellow border
-    
-    # Draw dots at each vertex for clarity
-    for point in refined_poly:
-        x, y = point[0]
-        cv2.circle(court_only_img, (x, y), 5, (0, 0, 255), -1)  # Red dots at vertices
-        
-    cv2.imwrite("court_outline_only.png", court_only_img)
-    
-    # Save other debug images
-    cv2.imwrite("court_mask_debug.png", court_mask)
-    
-    # 11. Print results
-    print(f"Court Occupied: {court_occupied}")
-    print(f"Total People Detected: {total_people}")
-    print(f"Court Polygon Points: {len(refined_poly)}")
+# Load configuration files
+print_step("Loading configuration files...")
+try:
+    with open('config.json', 'r') as f:
+        config = json.load(f)
+except FileNotFoundError:
+    print_error("config.json not found. Please provide the configuration file.")
+    exit(1)
+except json.JSONDecodeError:
+    print_error("config.json is not a valid JSON file.")
+    exit(1)
 
-if __name__ == "__main__":
-    main()
+try:
+    with open('advanced.json', 'r') as f:
+        advanced_config = json.load(f)
+except FileNotFoundError:
+    print_error("advanced.json not found. Please provide the advanced configuration file.")
+    exit(1)
+except json.JSONDecodeError:
+    print_error("advanced.json is not a valid JSON file.")
+    exit(1)
+
+# Ensure config has output_folder
+if 'output_folder' not in config:
+    print_step("No output folder specified in config. Using default 'output'")
+    config['output_folder'] = 'output'
+
+# Create output folder if it doesn't exist
+os.makedirs(config['output_folder'], exist_ok=True)
+
+# Load and process the image
+print_step("Loading and processing input image...")
+image = cv2.imread('input.png')
+if image is None:
+    print_error("Could not load input.png. Please ensure the file is a valid image.")
+    exit(1)
+
+# Use improved court detection function
+adjusted_mask = detect_court(image, config, advanced_config)
+
+# Load YOLOv3 model
+print_step("Loading YOLOv3 model for person detection...")
+try:
+    net = cv2.dnn.readNet('yolov3.weights', 'yolov3.cfg')
+except Exception as e:
+    print_error(f"Error loading YOLOv3 model: {e}")
+    exit(1)
+
+with open('coco.names', 'r') as f:
+    classes = f.read().strip().split('\n')
+layer_names = net.getLayerNames()
+output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers()]
+
+# Detect people
+print_step("Detecting people in the image...")
+height, width = image.shape[:2]
+blob = cv2.dnn.blobFromImage(image, 0.00392, (416, 416), (0, 0, 0), True, crop=False)
+net.setInput(blob)
+outs = net.forward(output_layers)
+
+boxes = []
+confidences = []
+class_ids = []
+for out in outs:
+    for detection in out:
+        scores = detection[5:]
+        class_id = np.argmax(scores)
+        confidence = scores[class_id]
+        if confidence > 0.5 and classes[class_id] == 'person':
+            center_x = int(detection[0] * width)
+            center_y = int(detection[1] * height)
+            w = int(detection[2] * width)
+            h = int(detection[3] * height)
+            x = int(center_x - w / 2)
+            y = int(center_y - h / 2)
+            boxes.append([x, y, w, h])
+            confidences.append(float(confidence))
+            class_ids.append(class_id)
+
+indexes = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.4)
+
+# Annotate the output image
+print_step("Annotating the output image...")
+output_image = image.copy()
+
+# Draw court overlay
+court_overlay = np.zeros_like(image)
+court_overlay[adjusted_mask == 255] = (0, 255, 255)  # Yellow overlay for court
+alpha = 0.3
+cv2.addWeighted(court_overlay, alpha, output_image, 1 - alpha, 0, output_image)
+
+# Draw bounding boxes and labels for people
+for i in range(len(boxes)):
+    if i in indexes:
+        x, y, w, h = boxes[i]
+        feet_x = x + w // 2
+        feet_y = y + h
+        inside = (0 <= feet_x < width and 0 <= feet_y < height and adjusted_mask[feet_y, feet_x] == 255)
+        color = (0, 255, 0) if inside else (0, 0, 255)  # Green for inside, Red for outside
+        label = 'Inside' if inside else 'Outside'
+        cv2.rectangle(output_image, (x, y), (x + w, y + h), color, 2)
+        cv2.putText(output_image, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+# Save the output and debug visualizations
+print_step("Saving output and debug images...")
+
+# Create a visualization of the detection process
+debug_image = np.hstack([
+    cv2.imread(os.path.join(config['output_folder'], 'edges.png')) if os.path.exists(os.path.join(config['output_folder'], 'edges.png')) else np.zeros((300, 300, 3), dtype=np.uint8),
+    cv2.imread(os.path.join(config['output_folder'], 'line_image.png')) if os.path.exists(os.path.join(config['output_folder'], 'line_image.png')) else np.zeros((300, 300, 3), dtype=np.uint8),
+])
+debug_image2 = np.hstack([
+    cv2.imread(os.path.join(config['output_folder'], 'color_mask.png')) if os.path.exists(os.path.join(config['output_folder'], 'color_mask.png')) else np.zeros((300, 300, 3), dtype=np.uint8),
+    cv2.imread(os.path.join(config['output_folder'], 'final_mask.png')) if os.path.exists(os.path.join(config['output_folder'], 'final_mask.png')) else np.zeros((300, 300, 3), dtype=np.uint8),
+])
+
+# Save the final output image
+cv2.imwrite(os.path.join(config['output_folder'], 'output.png'), output_image)
+cv2.imwrite(os.path.join(config['output_folder'], 'debug_process.png'), debug_image)
+cv2.imwrite(os.path.join(config['output_folder'], 'debug_masks.png'), debug_image2)
+
+print_success(f"Output image saved as '{os.path.join(config['output_folder'], 'output.png')}'.")
+print_success(f"Debug visualizations saved as '{os.path.join(config['output_folder'], 'debug_process.png')}' and '{os.path.join(config['output_folder'], 'debug_masks.png')}'.")
+print_header("Analysis Complete")

@@ -1,0 +1,12 @@
+{
+    "blue": {
+        "inside": {
+            "lower_hsv": [100, 50, 50],
+            "upper_hsv": [140, 255, 255]
+        },
+        "outside": {
+            "lower_hsv": [0, 0, 0],
+            "upper_hsv": [180, 255, 50]
+        }
+    }
+}
