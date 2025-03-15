@@ -1,11 +1,6 @@
 {
-    "court": {
-      "inside_color": "blue",
-      "line_color": "white"
-    },
-    "processing": {},
-    "yolo": {
-      "model_path": "yolov8n.pt"
-    }
-  }
-  
+  "court_color": "blue",
+  "output_folder": "images",
+  "width_flexibility": 0.1,
+  "length_flexibility": 0.1
+}
