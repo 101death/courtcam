@@ -173,3 +173,10 @@ cython_debug/
 # Model files
 *.cfg
 *.weights
+coco.names
+yolov3.cfg
+yolov3.weights
+yolov3.txt
+yolov3.data
+yolov3.names
+yolov3.cfg
