@@ -40,50 +40,19 @@ def ensure_model_files():
                 print_error("Please check your internet connection and try again.")
                 exit(1)
 
-# Function to detect court using multiple color ranges
+# Improved function to detect court using only color mask and straight line filtering
 def detect_court(image, config, advanced_config):
-    print_step("Detecting tennis court using advanced line detection and AI methods...")
+    print_step("Detecting tennis court using color mask and straight line filtering...")
     
     # Get the court color from config
     court_color = config['court_color']
-    width_flexibility = config['width_flexibility']
-    length_flexibility = config['length_flexibility']
     
     # Get output folder from config
     output_folder = config['output_folder']
     os.makedirs(output_folder, exist_ok=True)
     
-    # Step 1: Tennis court detection via line segments
-    # First, detect lines which are common in tennis courts
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
-    # Apply Gaussian blur to reduce noise
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    
-    # Use Canny edge detector
-    edges = cv2.Canny(blurred, 50, 150)
-    
-    # Save edge detection result for debugging
-    cv2.imwrite(os.path.join(output_folder, 'edges.png'), edges)
-    
-    # Use HoughLinesP to detect line segments
-    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=50, minLineLength=50, maxLineGap=20)
-    
-    # Create a blank image to draw the detected lines
-    line_image = np.zeros_like(gray)
-    
-    if lines is not None:
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-            cv2.line(line_image, (x1, y1), (x2, y2), 255, 2)
-    
-    cv2.imwrite(os.path.join(output_folder, 'line_image.png'), line_image)
-    
-    # Step 2: Combine with color detection
-    # Convert image to HSV
+    # Step 1: Create color mask based on HSV ranges
     hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    
-    # Create a mask for the court based on color
     color_mask = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
     
     # Process inside, outside, and lines court areas
@@ -98,32 +67,61 @@ def detect_court(image, config, advanced_config):
             # Add to combined mask
             color_mask = cv2.bitwise_or(color_mask, area_mask)
     
-    # Save color mask for debugging
-    cv2.imwrite(os.path.join(output_folder, 'color_mask.png'), color_mask)
-    cv2.imwrite(os.path.join(output_folder, 'line_image.png'), line_image)
+    # Save initial color mask for debugging
+    cv2.imwrite(os.path.join(output_folder, 'initial_color_mask.png'), color_mask)
     
-    # Since color_mask.png is working well, skip the refinement and just use it directly
-    print_step("Using direct color mask without further processing")
+    # Step 2: Apply morphological operations to clean up the mask
+    kernel = np.ones((5, 5), np.uint8)
+    color_mask = cv2.morphologyEx(color_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    color_mask = cv2.morphologyEx(color_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
     
-    # Just for debug information, find the contours in the color mask to report dimensions
+    # Save cleaned mask
+    cv2.imwrite(os.path.join(output_folder, 'cleaned_mask.png'), color_mask)
+    
+    # Step 3: Find contours and filter non-straight lines
     contours, _ = cv2.findContours(color_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    straight_mask = np.zeros_like(color_mask)
     
     if contours:
-        # Get the largest contour for debugging info
+        # Process each contour
+        for contour in contours:
+            # Filter small contours
+            if cv2.contourArea(contour) < 500:  # Adjust threshold as needed
+                continue
+                
+            # Approximate the contour with a polygon
+            epsilon = 0.01 * cv2.arcLength(contour, True)  # Adjust tolerance for "wiggly" lines
+            approx = cv2.approxPolyDP(contour, epsilon, True)
+            
+            # Draw the approximated contour (straighter lines)
+            cv2.drawContours(straight_mask, [approx], 0, 255, -1)
+    
+    # Save the straight line mask
+    cv2.imwrite(os.path.join(output_folder, 'straight_mask.png'), straight_mask)
+    
+    # Step 4: Fill holes in the mask to create the final court area
+    final_mask = straight_mask.copy()
+    
+    # Find all contours in the straight mask
+    contours, _ = cv2.findContours(final_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Fill in the largest contour (which should be the court)
+    if contours:
+        largest_contour = max(contours, key=cv2.contourArea)
+        cv2.drawContours(final_mask, [largest_contour], 0, 255, -1)
+    
+    # Save the final mask
+    cv2.imwrite(os.path.join(output_folder, 'final_mask.png'), final_mask)
+    
+    # Debug information for the largest area
+    contours, _ = cv2.findContours(final_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
         largest_contour = max(contours, key=cv2.contourArea)
         x, y, w, h = cv2.boundingRect(largest_contour)
-        
-        # Debug information
         print_step(f"Court detected at: x={x}, y={y}, width={w}, height={h}")
         print_step(f"Court aspect ratio: {w/h if h > 0 else 0:.2f}")
-    else:
-        print_step("No contours found in the color mask")
     
-    # Save the color mask as the final mask for consistency in output
-    cv2.imwrite(os.path.join(output_folder, 'final_mask.png'), color_mask)
-    
-    # Return the direct color mask as our court detection result
-    return color_mask
+    return final_mask
 
 # Main script starts here
 print_header("Court Camera Analysis")
@@ -175,7 +173,7 @@ if image is None:
     exit(1)
 
 # Use improved court detection function
-adjusted_mask = detect_court(image, config, advanced_config)
+court_mask = detect_court(image, config, advanced_config)
 
 # Load YOLOv3 model
 print_step("Loading YOLOv3 model for person detection...")
@@ -224,7 +222,7 @@ output_image = image.copy()
 
 # Draw court overlay
 court_overlay = np.zeros_like(image)
-court_overlay[adjusted_mask == 255] = (0, 255, 255)  # Yellow overlay for court
+court_overlay[court_mask == 255] = (0, 255, 255)  # Yellow overlay for court
 alpha = 0.3
 cv2.addWeighted(court_overlay, alpha, output_image, 1 - alpha, 0, output_image)
 
@@ -234,30 +232,27 @@ for i in range(len(boxes)):
         x, y, w, h = boxes[i]
         feet_x = x + w // 2
         feet_y = y + h
-        inside = (0 <= feet_x < width and 0 <= feet_y < height and adjusted_mask[feet_y, feet_x] == 255)
+        inside = (0 <= feet_x < width and 0 <= feet_y < height and court_mask[feet_y, feet_x] == 255)
         color = (0, 255, 0) if inside else (0, 0, 255)  # Green for inside, Red for outside
         label = 'Inside' if inside else 'Outside'
         cv2.rectangle(output_image, (x, y), (x + w, y + h), color, 2)
         cv2.putText(output_image, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-# Save the output and debug visualizations
-print_step("Saving output and debug images...")
-
-# Create a visualization of the detection process
-debug_image = np.hstack([
-    cv2.imread(os.path.join(config['output_folder'], 'edges.png')) if os.path.exists(os.path.join(config['output_folder'], 'edges.png')) else np.zeros((300, 300, 3), dtype=np.uint8),
-    cv2.imread(os.path.join(config['output_folder'], 'line_image.png')) if os.path.exists(os.path.join(config['output_folder'], 'line_image.png')) else np.zeros((300, 300, 3), dtype=np.uint8),
-])
-debug_image2 = np.hstack([
-    cv2.imread(os.path.join(config['output_folder'], 'color_mask.png')) if os.path.exists(os.path.join(config['output_folder'], 'color_mask.png')) else np.zeros((300, 300, 3), dtype=np.uint8),
-    cv2.imread(os.path.join(config['output_folder'], 'final_mask.png')) if os.path.exists(os.path.join(config['output_folder'], 'final_mask.png')) else np.zeros((300, 300, 3), dtype=np.uint8),
-])
-
-# Save the final output image
+# Save the output image
+print_step("Saving output image...")
 cv2.imwrite(os.path.join(config['output_folder'], 'output.png'), output_image)
-cv2.imwrite(os.path.join(config['output_folder'], 'debug_process.png'), debug_image)
-cv2.imwrite(os.path.join(config['output_folder'], 'debug_masks.png'), debug_image2)
+
+# Create a visualization of the mask processing steps
+mask_process = np.hstack([
+    cv2.imread(os.path.join(config['output_folder'], 'initial_color_mask.png')) if os.path.exists(os.path.join(config['output_folder'], 'initial_color_mask.png')) else np.zeros((300, 300), dtype=np.uint8),
+    cv2.imread(os.path.join(config['output_folder'], 'cleaned_mask.png')) if os.path.exists(os.path.join(config['output_folder'], 'cleaned_mask.png')) else np.zeros((300, 300), dtype=np.uint8),
+    cv2.imread(os.path.join(config['output_folder'], 'straight_mask.png')) if os.path.exists(os.path.join(config['output_folder'], 'straight_mask.png')) else np.zeros((300, 300), dtype=np.uint8),
+    cv2.imread(os.path.join(config['output_folder'], 'final_mask.png')) if os.path.exists(os.path.join(config['output_folder'], 'final_mask.png')) else np.zeros((300, 300), dtype=np.uint8)
+])
+
+# Save the debug visualization
+cv2.imwrite(os.path.join(config['output_folder'], 'mask_process.png'), mask_process)
 
 print_success(f"Output image saved as '{os.path.join(config['output_folder'], 'output.png')}'.")
-print_success(f"Debug visualizations saved as '{os.path.join(config['output_folder'], 'debug_process.png')}' and '{os.path.join(config['output_folder'], 'debug_masks.png')}'.")
+print_success(f"Mask processing steps saved as '{os.path.join(config['output_folder'], 'mask_process.png')}'.")
 print_header("Analysis Complete")
