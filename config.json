@@ -1,6 +1,5 @@
 {
-  "court_color": "blue",
+  "court_color": "white",
   "output_folder": "images",
-  "width_flexibility": 0.1,
-  "length_flexibility": 0.1
+  "high_contrast_mode": true
 }
