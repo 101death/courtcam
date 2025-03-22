@@ -53,6 +53,7 @@ OFF_COURT_COLOR = (0, 0, 255)                # Red for people outside the court
 TEXT_COLOR = (255, 255, 255)                 # White
 FONT_SCALE = 0.5                             # Text size
 TEXT_THICKNESS = 2                           # Text thickness
+DRAW_COURT_OUTLINE = False                   # Whether to draw court outline (default: False)
 
 # Terminal output settings
 VERBOSE = True                               # Show detailed output
@@ -418,7 +419,8 @@ def process_image(input_path, output_path, model_path, conf_threshold=DEFAULT_CO
         log(f"Combined court mask saved to {os.path.join(output_dir, f'{base_name}_court_mask.png')}")
     
     # Draw court outline
-    cv2.drawContours(output_image, [court_data['court_contour']], 0, COURT_OUTLINE_COLOR, COURT_OUTLINE_THICKNESS)
+    if DRAW_COURT_OUTLINE:
+        cv2.drawContours(output_image, [court_data['court_contour']], 0, COURT_OUTLINE_COLOR, COURT_OUTLINE_THICKNESS)
     
     # Detect people
     log("Detecting people...")
@@ -552,13 +554,16 @@ def main():
                       help="Process all images in the input directory")
     parser.add_argument("--debug-masks", action="store_true",
                       help="Save debug images of the court masks")
+    parser.add_argument("--show-court-outline", action="store_true",
+                      help="Show the court outline in the output image")
     args = parser.parse_args()
     
     # Set output modes based on flags
-    global VERBOSE, SUPER_QUIET, SUMMARY_ONLY
+    global VERBOSE, SUPER_QUIET, SUMMARY_ONLY, DRAW_COURT_OUTLINE
     SUMMARY_ONLY = args.summary
     SUPER_QUIET = args.super_quiet or SUMMARY_ONLY  # Summary mode implies super quiet
     VERBOSE = not args.quiet and not SUPER_QUIET
+    DRAW_COURT_OUTLINE = args.show_court_outline  # Set based on command line argument
     
     # Print header only if not in summary or super quiet mode
     if not SUPER_QUIET and not SUMMARY_ONLY:
