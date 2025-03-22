@@ -57,11 +57,14 @@ CONTOUR_APPROX_FACTOR = 0.02                 # Contour approximation factor
 ```python
 COURT_OUTLINE_COLOR = (0, 255, 0)            # Green
 COURT_OUTLINE_THICKNESS = 2                  # Line thickness
-ON_COURT_COLOR = (0, 255, 0)                 # Green for people on court
-OFF_COURT_COLOR = (0, 0, 255)                # Red for people off court
+ON_GREEN_COLOR = (0, 255, 0)                 # Green for people on green court
+ON_BLUE_COLOR = (255, 191, 0)                # Deep sky blue for people on blue court
+ON_COURT_OTHER_COLOR = (0, 255, 255)         # Yellow for people on other court areas
+OFF_COURT_COLOR = (0, 0, 255)                # Red for people outside the court
 TEXT_COLOR = (255, 255, 255)                 # White
 FONT_SCALE = 0.5                             # Text size
 TEXT_THICKNESS = 2                           # Text thickness
+DRAW_COURT_OUTLINE = False                   # Whether to draw court outline (default: False)
 ```
 
 ### Terminal Output Settings
@@ -90,6 +93,7 @@ Available options:
 - `--no-save`: Do not save the output image (just analyze)
 - `--batch`: Process all images in the input directory
 - `--debug-masks`: Save visualization images of the detected green and blue court areas
+- `--show-court-outline`: Display the green court outline in the output image
 
 ### Output Modes
 
@@ -134,6 +138,11 @@ python main.py --input images/folder --batch --summary
 Process an image and save debug visualization of court areas:
 ```
 python main.py --debug-masks
+```
+
+Process with court outline shown:
+```
+python main.py --show-court-outline
 ```
 
 ## How It Works
