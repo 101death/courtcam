@@ -65,6 +65,7 @@ TEXT_COLOR = (255, 255, 255)                 # White
 FONT_SCALE = 0.5                             # Text size
 TEXT_THICKNESS = 2                           # Text thickness
 DRAW_COURT_OUTLINE = False                   # Whether to draw court outline (default: False)
+SHOW_COURT_NUMBER = True                     # Whether to show court number in labels (default: True)
 ```
 
 ### Terminal Output Settings
@@ -89,12 +90,13 @@ Available options:
 - `--confidence`: Detection confidence threshold (default: 0.5)
 - `--quiet`: Suppress detailed console output
 - `--super-quiet`: Suppress almost all output except errors and success messages
-- `--summary`: Show only the summary count of people detected (one-line output)
+- `--summary`: Show only the summary count of courts and people detected (one-line output)
 - `--no-save`: Do not save the output image (just analyze)
 - `--batch`: Process all images in the input directory
 - `--debug-masks`: Save visualization images of the detected green and blue court areas
 - `--show-court-outline`: Display the green court outline in the output image
 - `--auto-convert`: Automatically convert JPG and WebP images to PNG format before processing
+- `--no-court-number`: Don't show the court number in the detection labels
 
 ### Output Modes
 
@@ -102,7 +104,10 @@ The script has several output modes:
 1. **Normal** - Shows all information, progress updates, and timestamps
 2. **Quiet** (`--quiet`) - Shows less information but keeps important status updates
 3. **Super Quiet** (`--super-quiet`) - Shows only errors and success messages
-4. **Summary** (`--summary`) - Shows just a single line with the count of people detected
+4. **Summary** (`--summary`) - Shows just a single line with the count of courts and people detected, like:
+   ```
+   People: 1 court(s), 3 total, 1 on green, 1 on blue, 0 on other court areas, 1 off court
+   ```
 
 ### Examples
 
@@ -151,6 +156,11 @@ Process a JPG image with automatic conversion to PNG:
 python main.py --input images/court.jpg --auto-convert
 ```
 
+Process an image without showing court numbers in labels:
+```
+python main.py --no-court-number
+```
+
 ## How It Works
 
 1. The system detects the tennis court using color segmentation in HSV space, identifying both green and blue areas
@@ -166,6 +176,17 @@ python main.py --input images/court.jpg --auto-convert
    - Yellow: People on other court areas (lines, transitions)
    - Red: People completely outside the court
 5. Each detection shows the confidence score and specific location
+6. The summary output includes the number of courts detected and people's positions
+
+## Output Summary
+
+The summary output will show:
+- Number of tennis courts detected
+- Total number of people detected
+- Count of people on green court areas
+- Count of people on blue court areas 
+- Count of people on other court areas (lines, transitions)
+- Count of people off the court completely
 
 ## Troubleshooting
 
@@ -177,4 +198,4 @@ If you encounter issues with model downloading:
 If the court detection doesn't work well:
 - Use the `--debug-masks` option to visualize exactly what areas are being detected as green or blue
 - Adjust the HSV color ranges in the COURT_COLOR_RANGES settings to match your court colors
-- For indoor vs outdoor courts with different lighting, you may need different settings 
+- For indoor vs outdoor courts with different lighting, you may need different settings

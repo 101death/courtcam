@@ -54,6 +54,7 @@ TEXT_COLOR = (255, 255, 255)                 # White
 FONT_SCALE = 0.5                             # Text size
 TEXT_THICKNESS = 2                           # Text thickness
 DRAW_COURT_OUTLINE = False                   # Whether to draw court outline (default: False)
+SHOW_COURT_NUMBER = True                     # Whether to show court number in labels (default: True)
 
 # Terminal output settings
 VERBOSE = True                               # Show detailed output
@@ -370,6 +371,7 @@ def process_image(input_path, output_path, model_path, conf_threshold=DEFAULT_CO
         log("No tennis court detected in the image", "WARNING")
         return
     
+    courts_detected = 1  # Count the detected court
     log(f"Tennis court detected with {len(court_data['court_contour'])} points", "SUCCESS")
     
     # If green detection barely caught anything, use an alternate approach
@@ -466,15 +468,24 @@ def process_image(input_path, output_path, model_path, conf_threshold=DEFAULT_CO
         if location == 'on_green':
             on_green_count += 1
             color = ON_GREEN_COLOR
-            label = f"On Green ({person['confidence']:.2f})"
+            if SHOW_COURT_NUMBER:
+                label = f"Court #1 - On Green ({person['confidence']:.2f})"
+            else:
+                label = f"On Green ({person['confidence']:.2f})"
         elif location == 'on_blue':
             on_blue_count += 1
             color = ON_BLUE_COLOR
-            label = f"On Blue ({person['confidence']:.2f})"
+            if SHOW_COURT_NUMBER:
+                label = f"Court #1 - On Blue ({person['confidence']:.2f})"
+            else:
+                label = f"On Blue ({person['confidence']:.2f})"
         elif location == 'on_court':
             on_court_other += 1
             color = ON_COURT_OTHER_COLOR
-            label = f"On Court ({person['confidence']:.2f})"
+            if SHOW_COURT_NUMBER:
+                label = f"Court #1 - On Court ({person['confidence']:.2f})"
+            else:
+                label = f"On Court ({person['confidence']:.2f})"
         else:  # off_court
             off_court_count += 1
             color = OFF_COURT_COLOR
@@ -493,13 +504,14 @@ def process_image(input_path, output_path, model_path, conf_threshold=DEFAULT_CO
     
     # Add summary text
     elapsed_time = time.time() - start_time
-    summary = f"Summary: {on_green_count} on green, {on_blue_count} on blue, {on_court_other} on other court areas, {off_court_count} off court"
+    summary = f"Summary: {courts_detected} court(s) detected, {on_green_count} on green, {on_blue_count} on blue, {on_court_other} on other court areas, {off_court_count} off court"
     log(summary, "SUCCESS" if SUMMARY_ONLY else "INFO")
     
     if not SUMMARY_ONLY:
         log(f"Processing completed in {elapsed_time:.2f} seconds", "INFO")
     
     return {
+        "courts_detected": courts_detected,
         "total_people": len(people),
         "on_green": on_green_count,
         "on_blue": on_blue_count,
@@ -536,6 +548,7 @@ def process_images(input_paths, output_dir, model_path, conf_threshold=DEFAULT_C
     
     # Print summary of all results
     if results:
+        total_courts = sum(r.get('courts_detected', 0) for r in results)
         total_people = sum(r['total_people'] for r in results)
         total_on_green = sum(r['on_green'] for r in results)
         total_on_blue = sum(r['on_blue'] for r in results)
@@ -543,11 +556,12 @@ def process_images(input_paths, output_dir, model_path, conf_threshold=DEFAULT_C
         total_off_court = sum(r['off_court'] for r in results)
         
         log(f"Processed {len(results)} images successfully", "SUCCESS")
+        log(f"Total courts detected: {total_courts}", "INFO")
         log(f"Total people detected: {total_people} ({total_on_green} on green, {total_on_blue} on blue, {total_on_court_other} on other court areas, {total_off_court} off court)", 
            "SUCCESS" if SUMMARY_ONLY else "INFO")
         
         if SUMMARY_ONLY:
-            print(f"Total: {total_people} people, {total_on_green} on green, {total_on_blue} on blue, {total_on_court_other} on other court areas, {total_off_court} off court")
+            print(f"Total: {total_courts} court(s), {total_people} people, {total_on_green} on green, {total_on_blue} on blue, {total_on_court_other} on other court areas, {total_off_court} off court")
     
     return results
 
@@ -568,7 +582,7 @@ def main():
     parser.add_argument("--super-quiet", action="store_true", 
                       help="Suppress almost all output except errors and success messages")
     parser.add_argument("--summary", action="store_true",
-                      help="Show only the summary count of people detected")
+                      help="Show only the summary count of courts and people detected")
     parser.add_argument("--no-save", action="store_true",
                       help="Do not save the output image (just analyze)")
     parser.add_argument("--batch", action="store_true",
@@ -579,14 +593,17 @@ def main():
                       help="Show the court outline in the output image")
     parser.add_argument("--auto-convert", action="store_true",
                       help="Automatically convert JPG and WebP images to PNG before processing")
+    parser.add_argument("--no-court-number", action="store_true",
+                      help="Don't show the court number in the detection labels")
     args = parser.parse_args()
     
     # Set output modes based on flags
-    global VERBOSE, SUPER_QUIET, SUMMARY_ONLY, DRAW_COURT_OUTLINE
+    global VERBOSE, SUPER_QUIET, SUMMARY_ONLY, DRAW_COURT_OUTLINE, SHOW_COURT_NUMBER
     SUMMARY_ONLY = args.summary
     SUPER_QUIET = args.super_quiet or SUMMARY_ONLY  # Summary mode implies super quiet
     VERBOSE = not args.quiet and not SUPER_QUIET
     DRAW_COURT_OUTLINE = args.show_court_outline  # Set based on command line argument
+    SHOW_COURT_NUMBER = not args.no_court_number  # Set based on command line argument
     
     # Print header only if not in summary or super quiet mode
     if not SUPER_QUIET and not SUMMARY_ONLY:
@@ -645,7 +662,7 @@ def main():
             
             # In summary-only mode, print a clean one-line summary
             if SUMMARY_ONLY and result:
-                print(f"People: {result['total_people']} total, {result['on_green']} on green, {result['on_blue']} on blue, {result['on_court_other']} on other court areas, {result['off_court']} off court")
+                print(f"People: {result.get('courts_detected', 0)} court(s), {result['total_people']} total, {result['on_green']} on green, {result['on_blue']} on blue, {result['on_court_other']} on other court areas, {result['off_court']} off court")
         
     except Exception as e:
         log(f"Error: {str(e)}", "ERROR")
