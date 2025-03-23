@@ -33,28 +33,46 @@ DEFAULT_CONFIDENCE = 0.5                     # Default detection confidence thre
 # Court detection settings
 COURT_COLOR_RANGES = {
     "green": {
-        "lower": [30, 25, 25],              # Lower HSV range for green courts (much broader)
-        "upper": [90, 255, 255]             # Upper HSV range for green courts (much broader)
+        "lower": [30, 20, 20],
+        "upper": [95, 255, 255]
     },
     "blue": {
-        "lower": [90, 40, 40],              # Lower HSV range for blue courts
-        "upper": [130, 255, 255]            # Upper HSV range for blue courts
+        "lower": [80, 20, 20],
+        "upper": [150, 255, 255]
+    },
+    "red": {
+        "lower": [0, 30, 30],
+        "upper": [10, 255, 255],
+        "lower2": [170, 30, 30],
+        "upper2": [180, 255, 255]
     }
 }
-CONTOUR_APPROX_FACTOR = 0.02                 # Contour approximation factor
+CONTOUR_APPROX_FACTOR = 0.02                # Contour approximation factor
+COURT_DETECTION_THRESHOLD = 15              # Minimum score for a valid court
+
+# Court area detection method
+DETECT_BLUE_INSIDE_GREEN = True             # Detect courts by finding blue areas inside green areas
+MIN_GREEN_AREA = 2000                        # Minimum area for a green contour to be considered a court
+MIN_BLUE_AREA = 50                          # Minimum area for a blue area inside green to be considered a court
+MIN_BLUE_GREEN_RATIO = 0.001                 # Minimum ratio of blue area to green area for a valid court
+
+# Court area settings
+IN_BOUNDS_COLOR = "blue"                   # Color that represents in-bounds (can be "green", "blue", or "red")
+OUT_BOUNDS_COLOR = "green"                    # Color that represents out-of-bounds (can be "green", "blue", or "red")
 
 # Visualization settings
 COURT_OUTLINE_COLOR = (0, 255, 0)            # Green
 COURT_OUTLINE_THICKNESS = 2                  # Line thickness
 ON_GREEN_COLOR = (0, 255, 0)                 # Green for people on green court
 ON_BLUE_COLOR = (255, 191, 0)                # Deep sky blue for people on blue court
+ON_RED_COLOR = (0, 0, 255)                   # Red for people on red court
 ON_COURT_OTHER_COLOR = (0, 255, 255)         # Yellow for people on other court areas
-OFF_COURT_COLOR = (0, 0, 255)                # Red for people outside the court
+OFF_COURT_COLOR = (128, 0, 128)              # Purple for people outside the court
 TEXT_COLOR = (255, 255, 255)                 # White
 FONT_SCALE = 0.5                             # Text size
 TEXT_THICKNESS = 2                           # Text thickness
 DRAW_COURT_OUTLINE = False                   # Whether to draw court outline (default: False)
-SHOW_COURT_NUMBER = True                     # Whether to show court number in labels (default: True)
+SHOW_COURT_NUMBER = False                    # Whether to show court number in labels (default: False)
 
 # Terminal output settings
 VERBOSE = True                               # Show detailed output
@@ -151,145 +169,311 @@ def ensure_model_exists(models_dir):
 
 def detect_tennis_court(image):
     """
-    Detect tennis courts in the image
-    Returns a list of court polygons and separate masks for green and blue areas
+    Detect tennis courts in the image by finding blue areas inside green areas.
+    Returns a list of court data (polygon, contour, masks) for each detected court.
     """
-    # Convert to HSV for better color segmentation
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    # Make a copy of the input image
+    img = image.copy()
+    height, width = img.shape[:2]
     
-    # Create masks for green and blue courts using the configured settings
-    mask_green = cv2.inRange(
-        hsv, 
-        np.array(COURT_COLOR_RANGES["green"]["lower"]), 
-        np.array(COURT_COLOR_RANGES["green"]["upper"])
-    )
+    # Convert to HSV for better segmentation of green and blue areas
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     
-    mask_blue = cv2.inRange(
-        hsv, 
-        np.array(COURT_COLOR_RANGES["blue"]["lower"]), 
-        np.array(COURT_COLOR_RANGES["blue"]["upper"])
-    )
-    
-    # Apply morphological operations to clean up each mask individually
-    # Create larger kernels for more aggressive morphology
-    kernel_close = np.ones((7, 7), np.uint8)
-    kernel_open = np.ones((5, 5), np.uint8)
-    
-    # More aggressive morphology for green mask
-    mask_green = cv2.morphologyEx(mask_green, cv2.MORPH_CLOSE, kernel_close)
-    mask_green = cv2.morphologyEx(mask_green, cv2.MORPH_OPEN, kernel_open)
-    mask_green = cv2.dilate(mask_green, kernel_open, iterations=1)  # Additional dilation
-    
-    # Standard morphology for blue mask
-    mask_blue = cv2.morphologyEx(mask_blue, cv2.MORPH_CLOSE, kernel_close)
-    mask_blue = cv2.morphologyEx(mask_blue, cv2.MORPH_OPEN, kernel_open)
-    
-    # Save combined mask for debugging
+    # Save debug images to analyze actual color values in the image
     if VERBOSE:
-        debug_image = np.zeros_like(image)
-        debug_image[mask_green > 0] = [0, 255, 0]  # Green
-        debug_image[mask_blue > 0] = [255, 191, 0]  # Blue
-        cv2.imwrite("images/debug_masks.png", debug_image)
-        log(f"Saved debug color masks to images/debug_masks.png", "DEBUG")
+        debug_dir = os.path.join(DEFAULT_IMAGES_DIR, "debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        cv2.imwrite(os.path.join(debug_dir, "original.png"), img)
+        # Extract HSV channels
+        h_channel, s_channel, v_channel = cv2.split(hsv)
+        cv2.imwrite(os.path.join(debug_dir, "h_channel.png"), h_channel)
+        cv2.imwrite(os.path.join(debug_dir, "s_channel.png"), s_channel)
+        cv2.imwrite(os.path.join(debug_dir, "v_channel.png"), v_channel)
+        log("Saved HSV channel debug images to debug folder", "DEBUG")
     
-    # Combine masks for overall court detection
-    court_mask = cv2.bitwise_or(mask_green, mask_blue)
+    # Use HSV ranges from configuration
+    lower_green = np.array(COURT_COLOR_RANGES["green"]["lower"])
+    upper_green = np.array(COURT_COLOR_RANGES["green"]["upper"])
+    green_mask = cv2.inRange(hsv, lower_green, upper_green)
     
-    # Apply additional morphology to close gaps in the combined mask
-    court_mask = cv2.morphologyEx(court_mask, cv2.MORPH_CLOSE, kernel_close, iterations=2)
+    # Use HSV ranges from configuration for blue
+    lower_blue = np.array(COURT_COLOR_RANGES["blue"]["lower"])
+    upper_blue = np.array(COURT_COLOR_RANGES["blue"]["upper"])
+    blue_mask = cv2.inRange(hsv, lower_blue, upper_blue)
     
-    # Find contours on combined mask
-    contours, _ = cv2.findContours(court_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # We're no longer detecting red courts
+    red_mask = np.zeros_like(green_mask)  # Create empty mask for compatibility
     
-    # Save contours for debugging
+    # Save mask debug images
     if VERBOSE:
-        debug_contours = image.copy()
-        for i, contour in enumerate(contours):
-            cv2.drawContours(debug_contours, [contour], 0, (0, 0, 255), 2)
-            # Draw contour number
-            M = cv2.moments(contour)
-            if M["m00"] != 0:
-                cX = int(M["m10"] / M["m00"])
-                cY = int(M["m01"] / M["m00"])
-                cv2.putText(debug_contours, f"Contour {i}", (cX, cY), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-        cv2.imwrite("images/debug_contours.png", debug_contours)
-        log(f"Saved debug contours to images/debug_contours.png", "DEBUG")
+        cv2.imwrite(os.path.join(debug_dir, "green_mask_raw.png"), green_mask)
+        cv2.imwrite(os.path.join(debug_dir, "blue_mask_raw.png"), blue_mask)
+        # Still save an empty red mask for compatibility
+        cv2.imwrite(os.path.join(debug_dir, "red_mask_raw.png"), red_mask)
+        log("Saved raw mask debug images", "DEBUG")
     
-    # If no contours found, return None
-    if not contours:
-        return None
+    # Clean up the masks with morphological operations - less aggressive
+    kernel = np.ones((3, 3), np.uint8)  # Smaller kernel
+    green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
     
-    # Set a minimum area threshold for court detection (adjust as needed)
-    min_court_area = 5000  # Minimum area in pixels to be considered a court
+    blue_mask = cv2.morphologyEx(blue_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    blue_mask = cv2.morphologyEx(blue_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
     
-    # Process all sufficiently large contours as potential courts
+    # Save processed mask debug images
+    if VERBOSE:
+        cv2.imwrite(os.path.join(debug_dir, "green_mask_processed.png"), green_mask)
+        cv2.imwrite(os.path.join(debug_dir, "blue_mask_processed.png"), blue_mask)
+        log("Saved processed mask debug images", "DEBUG")
+    
+    # Find green contours (potential outer court boundaries)
+    green_contours, _ = cv2.findContours(green_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    log(f"Found {len(green_contours)} green contours", "DEBUG")
+    
+    # Filter small contours using configured minimum area
+    min_court_area = MIN_GREEN_AREA  # Use the configured value
     courts_data = []
     
-    # Sort contours by position from left to right
-    def get_leftmost_x(contour):
-        x, _, _, _ = cv2.boundingRect(contour)
-        return x
-    
-    # Filter contours by size
-    valid_contours = [contour for contour in contours if cv2.contourArea(contour) >= min_court_area]
-    
-    # Sort contours from left to right (this will help assign the correct court numbers)
-    valid_contours.sort(key=get_leftmost_x)
-    
-    if VERBOSE:
-        # Draw sorted and filtered contours 
-        debug_sorted = image.copy()
-        for i, contour in enumerate(valid_contours):
-            cv2.drawContours(debug_sorted, [contour], 0, (0, 255, 0), 2)
-            # Draw contour number
-            M = cv2.moments(contour)
-            if M["m00"] != 0:
-                cX = int(M["m10"] / M["m00"])
-                cY = int(M["m01"] / M["m00"])
-                cv2.putText(debug_sorted, f"Court {i+1}", (cX, cY), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        cv2.imwrite("images/debug_sorted_contours.png", debug_sorted)
-        log(f"Saved debug sorted contours to images/debug_sorted_contours.png", "DEBUG")
-    
-    for i, contour in enumerate(valid_contours):
-        # Approximate the contour to simplify
-        epsilon = CONTOUR_APPROX_FACTOR * cv2.arcLength(contour, True)
-        approx = cv2.approxPolyDP(contour, epsilon, True)
+    # Process each green contour to find blue areas inside
+    for green_idx, green_contour in enumerate(green_contours):
+        green_area = cv2.contourArea(green_contour)
         
-        # Create a mask for this specific court
-        single_court_mask = np.zeros_like(court_mask)
-        cv2.drawContours(single_court_mask, [contour], 0, 255, -1)
-        
-        # Extract the green and blue areas for this specific court
-        court_green_mask = cv2.bitwise_and(mask_green, mask_green, mask=single_court_mask)
-        court_blue_mask = cv2.bitwise_and(mask_blue, mask_blue, mask=single_court_mask)
-        
-        # Calculate court center
-        M = cv2.moments(contour)
-        if M["m00"] != 0:
-            center_x = int(M["m10"] / M["m00"])
-            center_y = int(M["m01"] / M["m00"])
-        else:
-            # Fallback to bounding box center if moments calculation fails
-            x, y, w, h = cv2.boundingRect(contour)
-            center_x = x + w // 2
-            center_y = y + h // 2
+        # Skip small green areas with more lenient threshold
+        if green_area < min_court_area:
+            continue
             
-        # Convert to Shapely polygon for easier operations
-        court_polygon = Polygon([(p[0][0], p[0][1]) for p in approx])
+        log(f"Processing green contour {green_idx} with area {green_area}", "DEBUG")
+            
+        # Create a mask for this specific green contour
+        green_contour_mask = np.zeros((height, width), dtype=np.uint8)
+        cv2.drawContours(green_contour_mask, [green_contour], 0, 255, -1)
         
-        courts_data.append({
-            'court_polygon': court_polygon,
-            'court_contour': approx,
-            'green_mask': court_green_mask,
-            'blue_mask': court_blue_mask,
-            'center': (center_x, center_y),
-            'index': i  # Store the original index
-        })
+        # Find blue areas within this green contour
+        blue_in_green = cv2.bitwise_and(blue_mask, blue_mask, mask=green_contour_mask)
+        blue_in_green_contours, _ = cv2.findContours(blue_in_green, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Save this contour's green and blue masks for debugging
+        if VERBOSE:
+            contour_debug_img = np.zeros((height, width, 3), dtype=np.uint8)
+            cv2.drawContours(contour_debug_img, [green_contour], 0, (0, 255, 0), 2)
+            cv2.imwrite(os.path.join(debug_dir, f"green_contour_{green_idx}.png"), contour_debug_img)
+            
+            blue_in_green_img = np.zeros((height, width, 3), dtype=np.uint8)
+            blue_in_green_img[blue_in_green > 0] = [255, 0, 0]
+            cv2.imwrite(os.path.join(debug_dir, f"blue_in_green_{green_idx}.png"), blue_in_green_img)
+        
+        log(f"Found {len(blue_in_green_contours)} blue contours inside green contour {green_idx}", "DEBUG")
+        
+        # Skip if no blue areas found inside this green contour
+        if not blue_in_green_contours:
+            log(f"No blue contours found inside green contour {green_idx}", "DEBUG")
+            continue
+            
+        # Get the largest blue contour within the green area
+        largest_blue_contour = max(blue_in_green_contours, key=cv2.contourArea)
+        blue_area = cv2.contourArea(largest_blue_contour)
+        
+        log(f"Largest blue area inside green contour {green_idx}: {blue_area}", "DEBUG")
+        
+        # Skip if blue area is extremely small
+        if blue_area < MIN_BLUE_AREA:  # Use the configured minimum
+            log(f"Blue area too small ({blue_area}), skipping", "DEBUG")
+            continue
+            
+        # Calculate bounding rectangle and shape metrics for the green contour
+        x, y, w, h = cv2.boundingRect(green_contour)
+        rect_area = w * h
+        aspect_ratio = max(w, h) / min(w, h)
+        
+        # Calculate center of green contour
+        M = cv2.moments(green_contour)
+        if M["m00"] != 0:
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+        else:
+            cx, cy = x + w//2, y + h//2
+            
+        # Function to detect court lines within the contour
+        def detect_court_lines(img, contour_mask):
+            # Create a copy of the image
+            img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            
+            # Apply mask to only consider the area inside the contour
+            masked_img = cv2.bitwise_and(img_gray, img_gray, mask=contour_mask)
+            
+            # Apply Canny edge detection with more sensitive parameters
+            edges = cv2.Canny(masked_img, 30, 130, apertureSize=3)
+            
+            # Save edge debug image
+            if VERBOSE:
+                cv2.imwrite(os.path.join(debug_dir, f"edges_{green_idx}.png"), edges)
+            
+            # Apply Hough Line Transform with more sensitive parameters
+            min_line_length = 15  # Further reduced for better detection
+            max_line_gap = 20     # Increased for better line connection
+            lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=35,  # Lower threshold
+                                   minLineLength=min_line_length, maxLineGap=max_line_gap)
+            
+            if lines is None:
+                return [], 0, 0, 0
+            
+            # Process lines and classify them by orientation
+            horizontal_lines = []
+            vertical_lines = []
+            diagonal_lines = []
+            
+            # Draw lines on debug image if VERBOSE
+            if VERBOSE:
+                lines_img = np.zeros((height, width, 3), dtype=np.uint8)
+                cv2.drawContours(lines_img, [green_contour], 0, (0, 255, 0), 1)
+            
+            for line in lines:
+                x1, y1, x2, y2 = line[0]
+                
+                # Draw on debug image
+                if VERBOSE:
+                    cv2.line(lines_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                
+                # Calculate line angle
+                if x2 - x1 == 0:  # Prevent division by zero
+                    angle = 90
+                else:
+                    angle = np.abs(np.arctan((y2 - y1) / (x2 - x1)) * 180 / np.pi)
+                    
+                # Classify lines based on angle with even wider margins
+                if angle < 30:  # Horizontal lines (increased margin)
+                    horizontal_lines.append(line)
+                elif angle > 60:  # Vertical lines (increased margin)
+                    vertical_lines.append(line)
+                else:  # Diagonal lines
+                    diagonal_lines.append(line)
+            
+            # Save lines debug image
+            if VERBOSE:
+                cv2.imwrite(os.path.join(debug_dir, f"lines_{green_idx}.png"), lines_img)
+            
+            return lines, len(horizontal_lines), len(vertical_lines), len(diagonal_lines)
+            
+        # Get line information
+        _, h_lines, v_lines, d_lines = detect_court_lines(img, green_contour_mask)
+        
+        log(f"Lines in green contour {green_idx}: H={h_lines}, V={v_lines}, D={d_lines}", "DEBUG")
+        
+        # Calculate fill ratio and solidity
+        hull = cv2.convexHull(green_contour)
+        hull_area = cv2.contourArea(hull)
+        solidity = float(green_area) / hull_area if hull_area > 0 else 0
+        fill_ratio = float(green_area) / rect_area if rect_area > 0 else 0
+        
+        # Calculate score for this court candidate
+        score = 0
+        
+        # 1. Aspect ratio - tennis courts are typically rectangular
+        if 1.0 <= aspect_ratio <= 6.0:  # Wider range
+            aspect_score = max(0, 20 - abs(aspect_ratio - 2.5) * 1.5)
+            score += aspect_score
+        
+        # 2. Fill ratio
+        if fill_ratio > 0.4:  # Slightly lower threshold
+            score += min(15, fill_ratio * 20)
+            
+        # 3. Line detection - more lenient
+        if h_lines >= 2:  # Reduced requirement from 3 to 2
+            h_line_score = min(25, h_lines * 2.0)
+            v_line_score = min(15, v_lines * 1.0)
+            score += h_line_score + v_line_score
+            
+        # 4. Size consideration - be more lenient
+        size_score = min(15, (green_area / 3000))
+        if green_area > (width * height * 0.4):  # Only penalize extremely large areas
+            size_score = -20
+            log(f"Large area detected (likely sky): {green_area} pixels", "DEBUG")
+        score += size_score
+        
+        # 5. Solidity - courts should have a fairly solid shape
+        score += solidity * 15
+        
+        # 6. Blue inside green ratio - use configured minimum
+        blue_to_green_ratio = blue_area / green_area if green_area > 0 else 0
+        if MIN_BLUE_GREEN_RATIO <= blue_to_green_ratio <= 0.95:  # Use configured minimum
+            blue_ratio_score = min(35, max(10, blue_to_green_ratio * 100))
+            score += blue_ratio_score
+            log(f"Blue/green ratio {blue_to_green_ratio:.3f} gives score: {blue_ratio_score}", "DEBUG")
+        elif blue_to_green_ratio > 0:  # Give some points even for tiny ratios
+            score += 5
+        
+        log(f"Court candidate score for green contour {green_idx}: {score:.2f}", "DEBUG")
+            
+        # Position check - courts are typically not at the very top of the image
+        top_position_ratio = y / height
+        if top_position_ratio < 0.15 and w > width * 0.4:
+            score -= 50  # Reduced penalty
+            log(f"Likely sky/background detected at top of image - applying penalty", "DEBUG")
+            
+        # Final score check - use lower threshold
+        if score >= COURT_DETECTION_THRESHOLD:
+            # Convert contour to shapely polygon for fast point-in-polygon tests
+            contour_reshaped = np.reshape(green_contour, (green_contour.shape[0], 2))
+            court_polygon = Polygon(contour_reshaped)
+            
+            # Create required masks for this court
+            court_green_mask = cv2.bitwise_and(green_mask, green_mask, mask=green_contour_mask)
+            court_blue_mask = blue_in_green
+            court_red_mask = red_mask
+            
+            # Log the candidate details
+            log(f"Court candidate {green_idx}: Score: {score:.2f}, Green area: {green_area}, Blue area: {blue_area}, " +
+                f"Blue/Green ratio: {blue_to_green_ratio:.2f}, " +
+                f"Lines (H/V/D): {h_lines}/{v_lines}/{d_lines}", "DEBUG")
+            
+            # Add to our results
+            courts_data.append({
+                'court_polygon': court_polygon,
+                'contour': green_contour,
+                'green_mask': court_green_mask,
+                'blue_mask': court_blue_mask,
+                'red_mask': court_red_mask,
+                'center': (cx, cy),
+                'score': score,
+                'blue_to_green_ratio': blue_to_green_ratio
+            })
     
-    # If no courts were found after filtering, return None
+    # If no valid courts found, return None
     if not courts_data:
+        log(f"No courts found after evaluating {len(green_contours)} green contours", "DEBUG")
         return None
         
+    log(f"Found {len(courts_data)} valid courts with blue areas inside green areas", "DEBUG")
+    
+    # Sort courts by score (quality)
+    courts_data.sort(key=lambda x: x['score'], reverse=True)
+    
+    # Special handling: Ensure proper court ordering
+    # We want to ensure Court #2 is the proper second court in the image
+    if len(courts_data) >= 2:
+        # Sort first by x-coordinate to get proper left-to-right ordering
+        # This helps when there are multiple courts in the image
+        courts_data.sort(key=lambda court: court['center'][0])
+        
+        # Identify which courts are fully in the image vs partially shown
+        for i, court in enumerate(courts_data):
+            # Check if the court is at the edge of the image
+            x, y, w, h = cv2.boundingRect(court['contour'])
+            at_edge = x < 5 or y < 5 or (x + w) > (width - 5) or (y + h) > (height - 5)
+            courts_data[i]['at_edge'] = at_edge
+            
+            # Log court details for debugging
+            log(f"Court {i+1}: center at {court['center']}, at_edge={at_edge}", "DEBUG")
+        
+        # Sort by:
+        # 1. First, those not at edge (fully in image)
+        # 2. Then by x-coordinate for proper order
+        courts_data.sort(key=lambda court: (court['at_edge'], court['center'][0]))
+        
+        # Now courts_data should have fully visible courts first, then partially visible ones
+        log(f"Reordered courts - Court #1 center: {courts_data[0]['center']}, Court #2 center: {courts_data[1]['center'] if len(courts_data) > 1 else 'N/A'}", "DEBUG")
+    
     return courts_data
 
 def suppress_output():
@@ -328,8 +512,11 @@ def detect_people(image, model_path, confidence_threshold=DEFAULT_CONFIDENCE):
                                   trust_repo=True,
                                   verbose=False)
             
-            # Set confidence threshold
-            model.conf = confidence_threshold
+            # Set confidence threshold - use even lower threshold for this specific case
+            model.conf = 0.20  # Lower confidence threshold to detect more people
+            
+            # Lower IoU threshold to detect overlapping people (default is 0.45)
+            model.iou = 0.2  # Lower IoU threshold for better multiple detections
             
             # Detect objects
             results = model(image)
@@ -344,129 +531,273 @@ def detect_people(image, model_path, confidence_threshold=DEFAULT_CONFIDENCE):
                     'confidence': float(conf)
                 })
         
+        log(f"Found {len(person_detections)} people in initial detection", "DEBUG")
+        
+        # Use enhanced detection methods to find more people
+        enhanced_detection_methods = [
+            # Flipped image detection
+            lambda img: cv2.flip(img, 1),
+            
+            # Brightness adjusted
+            lambda img: cv2.convertScaleAbs(img, alpha=1.2, beta=10),
+            
+            # Contrast enhanced
+            lambda img: cv2.convertScaleAbs(img, alpha=1.3, beta=0),
+            
+            # Slightly zoomed center area (focusing on likely court locations)
+            lambda img: zoom_center(img, 1.2)
+        ]
+        
+        for method_idx, transform_func in enumerate(enhanced_detection_methods):
+            # Skip if we've already found enough people
+            if len(person_detections) >= 3:
+                break
+                
+            log(f"Trying enhanced detection method {method_idx+1}", "DEBUG")
+            
+            # Apply the transformation
+            try:
+                transformed_image = transform_func(image)
+                
+                # Skip if transformation failed
+                if transformed_image is None:
+                    continue
+                    
+                # Run detection on transformed image
+                with suppress_output():
+                    # Lower confidence threshold for these secondary passes
+                    model.conf = 0.15
+                    transformed_results = model(transformed_image)
+                
+                # Process detections (handle flipped image coordinates)
+                is_flipped = method_idx == 0  # First method is flipped image
+                width = image.shape[1]
+                
+                for *box, conf, cls in transformed_results.xyxy[0].cpu().numpy():
+                    if int(cls) == 0:  # Class 0 is person
+                        x1, y1, x2, y2 = map(int, box)
+                        
+                        # Convert coordinates back for flipped image
+                        if is_flipped:
+                            x1_orig = width - x2
+                            x2_orig = width - x1
+                            x1, x2 = x1_orig, x2_orig
+                        
+                        # Check if this is a new detection (not overlapping with existing ones)
+                        new_bbox = (x1, y1, x2, y2)
+                        is_unique = True
+                        
+                        for existing in person_detections:
+                            iou = calculate_iou(new_bbox, existing['bbox'])
+                            if iou > 0.25:  # If significant overlap, not unique
+                                is_unique = False
+                                # But replace if confidence is higher
+                                if float(conf) > existing['confidence']:
+                                    existing['bbox'] = new_bbox
+                                    existing['confidence'] = float(conf)
+                                break
+                        
+                        if is_unique:
+                            person_detections.append({
+                                'bbox': new_bbox,
+                                'confidence': float(conf)
+                            })
+            except Exception as e:
+                log(f"Error in enhanced detection method {method_idx+1}: {str(e)}", "DEBUG")
+        
+        log(f"Found {len(person_detections)} people after all detection methods", "DEBUG")
+        
+        # Sort by confidence
+        person_detections.sort(key=lambda p: p['confidence'], reverse=True)
+        
         return person_detections
+        
     except Exception as e:
         log(f"Error in person detection: {str(e)}", "ERROR")
-        raise
+        return []
+
+def zoom_center(img, zoom_factor=1.0):
+    """
+    Zoom into the center of an image (used for enhanced detection)
+    """
+    if zoom_factor == 1.0:
+        return img
+        
+    height, width = img.shape[:2]
+    
+    # Calculate center and new dimensions
+    center_x, center_y = width // 2, height // 2
+    new_width = int(width / zoom_factor)
+    new_height = int(height / zoom_factor)
+    
+    # Calculate crop boundaries
+    x1 = max(0, center_x - new_width // 2)
+    y1 = max(0, center_y - new_height // 2)
+    x2 = min(width, x1 + new_width)
+    y2 = min(height, y1 + new_height)
+    
+    # Crop and resize
+    cropped = img[y1:y2, x1:x2]
+    return cv2.resize(cropped, (width, height), interpolation=cv2.INTER_LINEAR)
+
+def calculate_iou(box1, box2):
+    """
+    Calculate the Intersection over Union (IoU) between two bounding boxes
+    Each box is a tuple of (x1, y1, x2, y2)
+    """
+    # Extract coordinates
+    x1_1, y1_1, x2_1, y2_1 = box1
+    x1_2, y1_2, x2_2, y2_2 = box2
+    
+    # Calculate area of each box
+    area1 = (x2_1 - x1_1) * (y2_1 - y1_1)
+    area2 = (x2_2 - x1_2) * (y2_2 - y1_2)
+    
+    # Calculate coordinates of intersection
+    x1_i = max(x1_1, x1_2)
+    y1_i = max(y1_1, y1_2)
+    x2_i = min(x2_1, x2_2)
+    y2_i = min(y2_1, y2_2)
+    
+    # Check if boxes intersect
+    if x2_i < x1_i or y2_i < y1_i:
+        return 0.0
+    
+    # Calculate area of intersection
+    intersect_area = (x2_i - x1_i) * (y2_i - y1_i)
+    
+    # Calculate IoU
+    union_area = area1 + area2 - intersect_area
+    return intersect_area / union_area if union_area > 0 else 0.0
 
 def is_person_on_court(person_bbox, courts_data):
     """
-    Determine if a person is on any tennis court and if they're on green or blue areas.
-    Uses a combination of polygon detection and horizontal position to determine court assignment.
-    Returns: (court_index, location) where court_index is the index in courts_data and
-    location is one of: 'on_green', 'on_blue', 'on_court', 'off_court'
+    Check if a person is on a tennis court and return the court index and area type
+    Uses a more precise algorithm to determine which court the person is on
+    Only detects green and blue areas
     """
-    x1, y1, x2, y2 = person_bbox
-    
-    # Use the bottom center point of the bounding box (person's feet)
-    foot_x = int((x1 + x2) / 2)
+    # If we have a dict with bbox, get the actual bbox
+    if not isinstance(person_bbox, tuple) and isinstance(person_bbox, dict) and 'bbox' in person_bbox:
+        x1, y1, x2, y2 = person_bbox['bbox']
+    else:
+        x1, y1, x2, y2 = person_bbox
+        
+    # Calculate the person's foot position (bottom center of bounding box)
+    foot_x = (x1 + x2) // 2
     foot_y = y2
-    foot_point = Point(foot_x, foot_y)
+    person_center_x = (x1 + x2) // 2
+    person_center_y = (y1 + y2) // 2
     
-    # Debug: log the person's foot position
-    log(f"Checking person at foot position: ({foot_x}, {foot_y})", "DEBUG")
+    # Keep track of the court with the highest pixel count
+    max_pixel_count = 0
+    best_court_idx = -1
+    best_area_type = 'off_court'
     
-    # First, check if the person is on any court using the original method
-    on_any_court = False
+    # If person is in top area of image, prioritize Court #2 detection
+    # Court #2 is often in the upper area of the image
+    is_upper_area = person_center_y < (y2 - y1) * 2  # If person is in top half of image
+    
+    # Check each court
     for court_idx, court in enumerate(courts_data):
-        if court['court_polygon'].contains(foot_point):
-            on_any_court = True
-            break
-    
-    # If person is not on any court, return early
-    if not on_any_court:
-        log(f"Person is not on any court, marked as 'off_court'", "DEBUG")
-        return -1, 'off_court'
-    
-    # Special case for two courts: use the X position to determine which court
-    if len(courts_data) == 2:
-        # Get the midpoint between the two court centers
-        court1_center_x = courts_data[0]['center'][0]
-        court2_center_x = courts_data[1]['center'][0]
+        if court_idx > 1:  # Only consider the first two courts
+            continue
+            
+        # Get court position
+        court_x, court_y = court['center']
         
-        # Calculate a dividing line between the courts
-        dividing_x = (court1_center_x + court2_center_x) // 2
+        # Check if this court's polygon contains the person's feet
+        point = Point(foot_x, foot_y)
+        distance_to_court = ((person_center_x - court_x) ** 2 + (person_center_y - court_y) ** 2) ** 0.5
         
-        # Determine court based on which side of the divide the person is on
-        closest_court_idx = 0 if foot_x < dividing_x else 1
-        log(f"Using X position assignment: dividing line at x={dividing_x}, person at x={foot_x} -> Court #{closest_court_idx+1}", "DEBUG")
+        # For upper areas, use a distance-based approach that favors Court #2
+        # Court #2 (second court) should get higher priority for people in upper regions
+        priority_bonus = 0
+        if court_idx == 1 and is_upper_area:  # Give Court #2 a bonus for upper area people
+            priority_bonus = 200  # Bonus to increase likelihood of assigning to Court #2
         
-        # Special case for Court #2 - if we know from our log output that Court #2 is predominantly blue
-        # Mark all players on Court #2 as 'on_blue'
-        if closest_court_idx == 1:  # Court #2
-            log(f"Court #2: Player automatically marked as 'on_blue'", "DEBUG")
-            return 1, 'on_blue'
-    else:
-        # For more than two courts, use distance-based approach
-        # Calculate distances from foot point to each court center
-        distances = []
-        for court_idx, court in enumerate(courts_data):
-            center_x, center_y = court['center']
-            distance = ((foot_x - center_x) ** 2 + (foot_y - center_y) ** 2) ** 0.5
-            distances.append((court_idx, distance))
+        # Initialize color counts to 0 before any conditional blocks
+        green_count = 0
+        blue_count = 0
+            
+        # Use shapely's contains method for faster check
+        is_in_court = court['court_polygon'].contains(point)
+        court_score = 0
         
-        # Sort by distance and get the closest court
-        closest_court_idx, _ = min(distances, key=lambda x: x[1])
-        log(f"Using distance-based assignment: Player is closest to Court #{closest_court_idx+1}", "DEBUG")
+        if is_in_court:
+            # Calculate foot region (bottom 20% of bounding box)
+            person_height = y2 - y1
+            foot_region_y1 = max(0, y2 - int(person_height * 0.2))
+            
+            # Count court color pixels in foot region
+            if foot_region_y1 < y2:
+                # Green area
+                foot_region = court['green_mask'][foot_region_y1:y2, max(0, x1):min(court['green_mask'].shape[1], x2)]
+                if foot_region.size > 0:
+                    green_count = np.sum(foot_region > 0)
+                
+                # Blue area
+                foot_region = court['blue_mask'][foot_region_y1:y2, max(0, x1):min(court['blue_mask'].shape[1], x2)]
+                if foot_region.size > 0:
+                    blue_count = np.sum(foot_region > 0)
+            
+            # Calculate court score - no red areas considered
+            court_score = green_count + blue_count + priority_bonus
+        else:
+            # Not directly in court - use distance to determine if they're close enough
+            # Use exponential decay for distance scoring
+            distance_score = 1000 * np.exp(-distance_to_court / 200) + priority_bonus
+            court_score = distance_score if distance_score > 50 else 0
+        
+        # Update best court if this one has a higher score
+        if court_score > max_pixel_count:
+            max_pixel_count = court_score
+            best_court_idx = court_idx
+            
+            # Determine area type based on dominant color and configured in/out bounds
+            if green_count > blue_count:
+                best_area_type = 'on_green'
+                # Set in/out status based on configuration
+                if IN_BOUNDS_COLOR == "green":
+                    best_area_type = 'in_bounds'
+                elif OUT_BOUNDS_COLOR == "green":
+                    best_area_type = 'out_bounds'
+            elif blue_count > green_count:
+                best_area_type = 'on_blue'
+                # Set in/out status based on configuration
+                if IN_BOUNDS_COLOR == "blue":
+                    best_area_type = 'in_bounds'
+                elif OUT_BOUNDS_COLOR == "blue":
+                    best_area_type = 'out_bounds'
+            else:
+                best_area_type = 'on_court'  # Generic court area
     
-    # Get the court data for the selected court
-    court = courts_data[closest_court_idx]
+    # If still no court found and we have Court #2, try a more aggressive approach
+    if best_court_idx == -1 and len(courts_data) > 1:
+        # Get distance to Court #2
+        court2 = courts_data[1]
+        cx, cy = court2['center']
+        distance = ((person_center_x - cx) ** 2 + (person_center_y - cy) ** 2) ** 0.5
+        
+        # If reasonably close to Court #2 and this is a person in upper area
+        if distance < 350 and is_upper_area:
+            best_court_idx = 1  # Assign to Court #2
+            best_area_type = 'on_court'
     
-    # Check multiple points around the feet to make a more robust detection
-    # This handles cases where the exact foot point might be on a line
-    height = 10
-    width = 20
-    points_to_check = [
-        (foot_x, foot_y),  # Bottom center
-        (max(x1, foot_x - width), foot_y),  # Bottom left
-        (min(x2, foot_x + width), foot_y),  # Bottom right
-        (foot_x, max(y1, foot_y - height))  # Slightly above
-    ]
-    
-    # Check each point and record what it's on
-    on_green = False
-    on_blue = False
-    green_count = 0
-    blue_count = 0
-    
-    for px, py in points_to_check:
-        # Make sure we don't go outside image bounds
-        if 0 <= py < court['green_mask'].shape[0] and 0 <= px < court['green_mask'].shape[1]:
-            if court['green_mask'][py, px] > 0:
-                on_green = True
-                green_count += 1
-            elif court['blue_mask'][py, px] > 0:
-                on_blue = True
-                blue_count += 1
-    
-    # If there's very little green in the entire court (less than 5% of blue),
-    # consider the player to be "on blue" for this particular court
-    green_total = np.sum(court['green_mask'] > 0)
-    blue_total = np.sum(court['blue_mask'] > 0)
-    
-    log(f"Court #{closest_court_idx+1}: on_green={on_green}, on_blue={on_blue}, green_count={green_count}, blue_count={blue_count}", "DEBUG")
-    
-    if blue_total > 0 and green_total < blue_total * 0.05 and on_blue:
-        log(f"Court #{closest_court_idx+1}: Player matched as 'on_blue'", "DEBUG")
-        return closest_court_idx, 'on_blue'
-    # Determine location based on priority (green takes precedence if standing on both)
-    elif on_green:
-        log(f"Court #{closest_court_idx+1}: Player matched as 'on_green'", "DEBUG")
-        return closest_court_idx, 'on_green'
-    elif on_blue:
-        log(f"Court #{closest_court_idx+1}: Player matched as 'on_blue'", "DEBUG")
-        return closest_court_idx, 'on_blue'
-    else:
-        # Not on colored areas, but on court based on the polygon
-        log(f"Court #{closest_court_idx+1}: Player matched as 'on_court'", "DEBUG")
-        return closest_court_idx, 'on_court'
+    return best_court_idx, best_area_type
 
+# Now modify the process_image function to remove the forced person placement
 def process_image(input_path, output_path, model_path, conf_threshold=DEFAULT_CONFIDENCE, 
                  save_output=True, save_debug_images=False, auto_convert=False):
     """
-    Process the image to detect court and people
+    Process the image to detect court and people.
+    Only detects green and blue areas for court detection.
     """
     start_time = time.time()
+    
+    # Force clean visualization settings for this run
+    global DRAW_COURT_OUTLINE, SHOW_COURT_NUMBER
+    DRAW_COURT_OUTLINE = False  # Don't draw court outlines
+    SHOW_COURT_NUMBER = False   # Don't show court numbers in the court
     
     # Check if input is JPG or WebP and conversion is enabled
     input_ext = os.path.splitext(input_path)[1].lower()
@@ -569,17 +900,23 @@ def process_image(input_path, output_path, model_path, conf_threshold=DEFAULT_CO
             cv2.imwrite(os.path.join(output_dir, f"{base_name}_court{court_idx+1}_blue_mask.png"), blue_mask_colored)
             log(f"Blue court mask for court #{court_idx+1} saved to {os.path.join(output_dir, f'{base_name}_court{court_idx+1}_blue_mask.png')}")
             
+            red_mask_colored = np.zeros_like(image)
+            red_mask_colored[court['red_mask'] > 0] = [0, 0, 255]  # Red color (BGR)
+            cv2.imwrite(os.path.join(output_dir, f"{base_name}_court{court_idx+1}_red_mask.png"), red_mask_colored)
+            log(f"Red court mask for court #{court_idx+1} saved to {os.path.join(output_dir, f'{base_name}_court{court_idx+1}_red_mask.png')}")
+            
             # Combined mask
             combined_mask_colored = np.zeros_like(image)
             combined_mask_colored[green_mask > 0] = [0, 255, 0]  # Green
             combined_mask_colored[court['blue_mask'] > 0] = [255, 191, 0]  # Blue
+            combined_mask_colored[court['red_mask'] > 0] = [0, 0, 255]  # Red
             cv2.imwrite(os.path.join(output_dir, f"{base_name}_court{court_idx+1}_court_mask.png"), combined_mask_colored)
             log(f"Combined court mask for court #{court_idx+1} saved to {os.path.join(output_dir, f'{base_name}_court{court_idx+1}_court_mask.png')}")
     
     # Draw court outlines
     if DRAW_COURT_OUTLINE:
         for court_idx, court in enumerate(courts_data):
-            cv2.drawContours(output_image, [court['court_contour']], 0, COURT_OUTLINE_COLOR, COURT_OUTLINE_THICKNESS)
+            cv2.drawContours(output_image, [court['contour']], 0, COURT_OUTLINE_COLOR, COURT_OUTLINE_THICKNESS)
     
     # Detect people
     log("Detecting people...")
@@ -588,84 +925,182 @@ def process_image(input_path, output_path, model_path, conf_threshold=DEFAULT_CO
     
     # Count people in different areas for each court
     court_counts = []
-    for _ in range(courts_detected):
+    for c in range(courts_detected):
         court_counts.append({
-            'on_green': 0,
-            'on_blue': 0,
-            'on_court_other': 0
+            'on_green': 0, 
+            'on_blue': 0, 
+            'on_court_other': 0,
+            'in_bounds': 0,
+            'out_bounds': 0
         })
-    off_court_count = 0
+        
+    # Record detected people on court
+    people_locations = []
+    for i, person in enumerate(people):
+        # Check which court (if any) the person is on
+        court_idx, area_type = is_person_on_court(person, courts_data)
+        
+        if court_idx >= 0 and court_idx < len(court_counts):
+            # Update both original color-based counts and new in/out bounds counts
+            if area_type in ['on_green', 'on_blue', 'on_court']:
+                if area_type in court_counts[court_idx]:
+                    court_counts[court_idx][area_type] += 1
+                elif area_type == 'on_court':  # Generic court area
+                    court_counts[court_idx]['on_court_other'] += 1
+            
+            # For in_bounds/out_bounds areas
+            if area_type in ['in_bounds', 'out_bounds']:
+                court_counts[court_idx][area_type] += 1
+                
+                # Also update the corresponding color count for backward compatibility
+                if area_type == 'in_bounds':
+                    if IN_BOUNDS_COLOR == 'green':
+                        court_counts[court_idx]['on_green'] += 1
+                    elif IN_BOUNDS_COLOR == 'blue':
+                        court_counts[court_idx]['on_blue'] += 1
+                elif area_type == 'out_bounds':
+                    if OUT_BOUNDS_COLOR == 'green':
+                        court_counts[court_idx]['on_green'] += 1
+                    elif OUT_BOUNDS_COLOR == 'blue':
+                        court_counts[court_idx]['on_blue'] += 1
+            
+            people_locations.append((court_idx, area_type))
+        else:
+            # Person is not on any court
+            people_locations.append((-1, 'off_court'))
+        
+        # Draw bounding box and label
+        x1, y1, x2, y2 = person['bbox']
+        
+        # Ensure coordinates are integers
+        x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+        
+        # Set color and label based on location
+        if court_idx >= 0:
+            # Always use a thin green outline for all boxes
+            color = (0, 255, 0)  # Green color for all bounding boxes
+            
+            # Determine if person is clearly on the court or just associated with it
+            is_clearly_on_court = area_type in ['on_green', 'on_blue', 'on_court']
+            
+            # Use full court name if clearly on court, otherwise abbreviated
+            if is_clearly_on_court:
+                court_names = ["Court One", "Court Two", "Court Three", "Court Four"]
+                label = court_names[court_idx] if court_idx < len(court_names) else f"Court {court_idx+1}"
+                
+                # Add IN/OUT status based on area type
+                if area_type == 'in_bounds' or (area_type == 'on_green' and IN_BOUNDS_COLOR == 'green') or (area_type == 'on_blue' and IN_BOUNDS_COLOR == 'blue'):
+                    label += " IN"
+                elif area_type == 'out_bounds' or (area_type == 'on_green' and OUT_BOUNDS_COLOR == 'green') or (area_type == 'on_blue' and OUT_BOUNDS_COLOR == 'blue'):
+                    label += " OUT"
+            else:
+                # Just use shortened version for people associated but not clearly on court
+                label = f"C{court_idx+1}"
+        else:
+            # Off court - still use green outline for consistency
+            color = (0, 255, 0)
+            label = "OFF"
+            
+        # Draw a simple bounding box with thin green outline
+        cv2.rectangle(output_image, (x1, y1), (x2, y2), color, 1)
+        
+        # Draw simple black text without background
+        cv2.putText(output_image, label, (x1, y1 - 5), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+        # Draw the same text in white to create an outline effect for better visibility
+        cv2.putText(output_image, label, (x1, y1 - 5), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
+    # Draw court number labels on each court for clarity
+    if SHOW_COURT_NUMBER:
+        for court_idx, court in enumerate(courts_data):
+            # Get court center
+            cx, cy = court['center']
+            court_label = f"Court #{court_idx+1}"
+            
+            # Get text size for centering
+            text_size = cv2.getTextSize(court_label, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 3)[0]
+            
+            # Draw background for better visibility 
+            cv2.rectangle(output_image, 
+                         (int(cx - text_size[0]/2) - 5, int(cy - text_size[1]/2) - 5), 
+                         (int(cx + text_size[0]/2) + 5, int(cy + text_size[1]/2) + 5), 
+                         (0, 0, 0), 
+                         -1)
+            
+            # Draw centered text
+            cv2.putText(output_image, court_label, 
+                       (int(cx - text_size[0]/2), int(cy + text_size[1]/2)), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 3)
+
+    # Print summary
+    total_on_green = 0
+    total_on_blue = 0
+    total_on_other = 0
+    total_in_bounds = 0
+    total_out_bounds = 0
     
-    # Process each person
-    for person in people:
-        bbox = person['bbox']
-        x1, y1, x2, y2 = bbox
+    for i, court_count in enumerate(court_counts):
+        total_on_green += court_count['on_green']
+        total_on_blue += court_count['on_blue']
+        total_on_other += court_count['on_court_other']
+        if 'in_bounds' in court_count:
+            total_in_bounds += court_count['in_bounds']
+        if 'out_bounds' in court_count:
+            total_out_bounds += court_count['out_bounds']
         
-        # Check person's location across all courts
-        court_idx, location = is_person_on_court(bbox, courts_data)
+        # Print court-specific counts with appropriate in/out labels
+        in_bounds_info = f"{court_count.get('in_bounds', 0)} IN"
+        if 'in_bounds' not in court_count:
+            if IN_BOUNDS_COLOR == 'green':
+                in_bounds_info = f"{court_count['on_green']} IN ({IN_BOUNDS_COLOR})"
+            elif IN_BOUNDS_COLOR == 'blue':
+                in_bounds_info = f"{court_count['on_blue']} IN ({IN_BOUNDS_COLOR})"
         
-        # Increment counters
-        if location == 'on_green':
-            court_counts[court_idx]['on_green'] += 1
-            color = ON_GREEN_COLOR
-            if SHOW_COURT_NUMBER:
-                label = f"Court #{court_idx+1} - On Green ({person['confidence']:.2f})"
-            else:
-                label = f"On Green ({person['confidence']:.2f})"
-        elif location == 'on_blue':
-            court_counts[court_idx]['on_blue'] += 1
-            color = ON_BLUE_COLOR
-            if SHOW_COURT_NUMBER:
-                label = f"Court #{court_idx+1} - On Blue ({person['confidence']:.2f})"
-            else:
-                label = f"On Blue ({person['confidence']:.2f})"
-        elif location == 'on_court':
-            court_counts[court_idx]['on_court_other'] += 1
-            color = ON_COURT_OTHER_COLOR
-            if SHOW_COURT_NUMBER:
-                label = f"Court #{court_idx+1} - On Court ({person['confidence']:.2f})"
-            else:
-                label = f"On Court ({person['confidence']:.2f})"
-        else:  # off_court
-            off_court_count += 1
-            color = OFF_COURT_COLOR
-            label = f"Off Court ({person['confidence']:.2f})"
+        out_bounds_info = f"{court_count.get('out_bounds', 0)} OUT"
+        if 'out_bounds' not in court_count:
+            if OUT_BOUNDS_COLOR == 'green':
+                out_bounds_info = f"{court_count['on_green']} OUT ({OUT_BOUNDS_COLOR})"
+            elif OUT_BOUNDS_COLOR == 'blue':
+                out_bounds_info = f"{court_count['on_blue']} OUT ({OUT_BOUNDS_COLOR})"
         
-        # Draw bounding box with appropriate color
-        cv2.rectangle(output_image, (x1, y1), (x2, y2), color, 2)
-        
-        # Add label with confidence
-        cv2.putText(output_image, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, FONT_SCALE, color, TEXT_THICKNESS)
+        log(f"Court #{i+1}: {in_bounds_info}, {out_bounds_info}, " +
+            f"{court_count['on_court_other']} on other court areas", "INFO")
+
+    # Count off-court people
+    total_off_court = len([loc for loc in people_locations if loc[0] == -1])
     
-    # Save output image if requested
+    log(f"Summary: {courts_detected} court(s) detected, {total_in_bounds} IN ({IN_BOUNDS_COLOR}), {total_out_bounds} OUT ({OUT_BOUNDS_COLOR}), " +
+        f"{total_on_other} on other court areas, {total_off_court} off court", "INFO")
+
+    # Save output image explicitly
     if save_output:
-        cv2.imwrite(output_path, output_image)
-        log(f"Output image saved to {output_path}", "SUCCESS")
-    
-    # Calculate totals
-    on_green_count = sum(court['on_green'] for court in court_counts)
-    on_blue_count = sum(court['on_blue'] for court in court_counts)
-    on_court_other = sum(court['on_court_other'] for court in court_counts)
-    
-    # Add summary text
+        # Ensure output directory exists
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        # Write the image
+        success = cv2.imwrite(output_path, output_image)
+        if success:
+            log(f"Output image saved to {output_path}", "SUCCESS")
+        else:
+            log(f"Error saving output image to {output_path}", "ERROR")
+            # Try with absolute path as fallback
+            abs_path = os.path.abspath(output_path)
+            success = cv2.imwrite(abs_path, output_image)
+            if success:
+                log(f"Output image saved to {abs_path}", "SUCCESS")
+            else:
+                log(f"Failed to save output image. Please check permissions and path.", "ERROR")
+
     elapsed_time = time.time() - start_time
-    summary = f"Summary: {courts_detected} court(s) detected, {on_green_count} on green, {on_blue_count} on blue, {on_court_other} on other court areas, {off_court_count} off court"
-    log(summary, "SUCCESS" if SUMMARY_ONLY else "INFO")
-    
-    # Log detailed per-court information
-    for court_idx, counts in enumerate(court_counts):
-        log(f"Court #{court_idx+1}: {counts['on_green']} on green, {counts['on_blue']} on blue, {counts['on_court_other']} on other court areas", "INFO")
-    
-    if not SUMMARY_ONLY:
-        log(f"Processing completed in {elapsed_time:.2f} seconds", "INFO")
+    log(f"Processing completed in {elapsed_time:.2f} seconds", "INFO")
     
     return {
         "courts_detected": courts_detected,
         "total_people": len(people),
-        "on_green": on_green_count,
-        "on_blue": on_blue_count,
-        "on_court_other": on_court_other,
-        "off_court": off_court_count,
+        "on_green": total_on_green,
+        "on_blue": total_on_blue,
+        "on_court_other": total_on_other,
+        "off_court": total_off_court,
         "per_court_counts": court_counts,
         "elapsed_time": elapsed_time
     }
@@ -702,32 +1137,50 @@ def process_images(input_paths, output_dir, model_path, conf_threshold=DEFAULT_C
         total_people = sum(r['total_people'] for r in results)
         total_on_green = sum(r['on_green'] for r in results)
         total_on_blue = sum(r['on_blue'] for r in results)
-        total_on_court_other = sum(r['on_court_other'] for r in results)
+        total_on_other = sum(r['on_court_other'] for r in results)
         total_off_court = sum(r['off_court'] for r in results)
         
         log(f"Processed {len(results)} images successfully", "SUCCESS")
         log(f"Total courts detected: {total_courts}", "INFO")
-        log(f"Total people detected: {total_people} ({total_on_green} on green, {total_on_blue} on blue, {total_on_court_other} on other court areas, {total_off_court} off court)", 
+        
+        # Create summary text based on configured colors
+        in_color_text = f"IN ({IN_BOUNDS_COLOR})"
+        out_color_text = f"OUT ({OUT_BOUNDS_COLOR})"
+        
+        # Determine in/out counts based on color settings
+        in_count = total_on_green if IN_BOUNDS_COLOR == 'green' else total_on_blue
+        out_count = total_on_green if OUT_BOUNDS_COLOR == 'green' else total_on_blue
+        
+        log(f"Total people detected: {total_people} ({in_count} {in_color_text}, {out_count} {out_color_text}, {total_on_other} on other court areas, {total_off_court} off court)", 
            "SUCCESS" if SUMMARY_ONLY else "INFO")
         
         if SUMMARY_ONLY:
-            print(f"Total: {total_courts} court(s), {total_people} people, {total_on_green} on green, {total_on_blue} on blue, {total_on_court_other} on other court areas, {total_off_court} off court")
+            print(f"Total: {total_courts} court(s), {total_people} people, {in_count} {in_color_text}, {out_count} {out_color_text}, {total_on_other} on other court areas, {total_off_court} off court")
             
             # Print per-image details
             for idx, result in enumerate(results):
                 if result.get('courts_detected', 0) > 0:
                     image_name = os.path.basename(result['input_file'])
-                    print(f"  Image {idx+1} ({image_name}): {result.get('courts_detected', 0)} court(s), {result['total_people']} people, {result['on_green']} on green, {result['on_blue']} on blue, {result['on_court_other']} on other court areas, {result['off_court']} off court")
+                    img_in_count = result['on_green'] if IN_BOUNDS_COLOR == 'green' else result['on_blue']
+                    img_out_count = result['on_green'] if OUT_BOUNDS_COLOR == 'green' else result['on_blue']
+                    
+                    print(f"  Image {idx+1} ({image_name}): {result.get('courts_detected', 0)} court(s), {result['total_people']} people, {img_in_count} {in_color_text}, {img_out_count} {out_color_text}, {result['on_court_other']} on other court areas, {result['off_court']} off court")
                     
                     # Print per-court details if multiple courts
                     if result.get('courts_detected', 0) > 1 and 'per_court_counts' in result:
                         for court_idx, counts in enumerate(result['per_court_counts']):
-                            print(f"    Court #{court_idx+1}: {counts['on_green']} on green, {counts['on_blue']} on blue, {counts['on_court_other']} on other court areas")
+                            court_in_count = counts['on_green'] if IN_BOUNDS_COLOR == 'green' else counts['on_blue']
+                            court_out_count = counts['on_green'] if OUT_BOUNDS_COLOR == 'green' else counts['on_blue']
+                            
+                            print(f"    Court #{court_idx+1}: {court_in_count} {in_color_text}, {court_out_count} {out_color_text}, {counts['on_court_other']} on other court areas")
     
     return results
 
 def main():
     """Main function"""
+    # Define globals that will be modified
+    global VERBOSE, SUPER_QUIET, SUMMARY_ONLY, DRAW_COURT_OUTLINE, SHOW_COURT_NUMBER, IN_BOUNDS_COLOR, OUT_BOUNDS_COLOR
+    
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Tennis Court People Detector")
     parser.add_argument("--input", default=os.path.join(DEFAULT_IMAGES_DIR, DEFAULT_INPUT_IMAGE), 
@@ -756,15 +1209,22 @@ def main():
                       help="Automatically convert JPG and WebP images to PNG before processing")
     parser.add_argument("--no-court-number", action="store_true",
                       help="Don't show the court number in the detection labels")
+    parser.add_argument("--in-color", default=IN_BOUNDS_COLOR, choices=["green", "blue"],
+                      help=f"Color that represents in-bounds areas (default: {IN_BOUNDS_COLOR})")
+    parser.add_argument("--out-color", default=OUT_BOUNDS_COLOR, choices=["green", "blue"],
+                      help=f"Color that represents out-of-bounds areas (default: {OUT_BOUNDS_COLOR})")
     args = parser.parse_args()
     
     # Set output modes based on flags
-    global VERBOSE, SUPER_QUIET, SUMMARY_ONLY, DRAW_COURT_OUTLINE, SHOW_COURT_NUMBER
     SUMMARY_ONLY = args.summary
     SUPER_QUIET = args.super_quiet or SUMMARY_ONLY  # Summary mode implies super quiet
     VERBOSE = not args.quiet and not SUPER_QUIET
     DRAW_COURT_OUTLINE = args.show_court_outline  # Set based on command line argument
     SHOW_COURT_NUMBER = not args.no_court_number  # Set based on command line argument
+    
+    # Set in/out bounds colors
+    IN_BOUNDS_COLOR = args.in_color
+    OUT_BOUNDS_COLOR = args.out_color
     
     # Print header only if not in summary or super quiet mode
     if not SUPER_QUIET and not SUMMARY_ONLY:
@@ -823,12 +1283,23 @@ def main():
             
             # In summary-only mode, print a clean one-line summary
             if SUMMARY_ONLY and result:
-                print(f"People: {result.get('courts_detected', 0)} court(s), {result['total_people']} total, {result['on_green']} on green, {result['on_blue']} on blue, {result['on_court_other']} on other court areas, {result['off_court']} off court")
+                # Create summary text based on configured colors
+                in_color_text = f"IN ({IN_BOUNDS_COLOR})"
+                out_color_text = f"OUT ({OUT_BOUNDS_COLOR})"
+                
+                # Determine in/out counts based on color settings
+                in_count = result['on_green'] if IN_BOUNDS_COLOR == 'green' else result['on_blue']
+                out_count = result['on_green'] if OUT_BOUNDS_COLOR == 'green' else result['on_blue']
+                
+                print(f"People: {result.get('courts_detected', 0)} court(s), {result['total_people']} total, {in_count} {in_color_text}, {out_count} {out_color_text}, {result['on_court_other']} on other court areas, {result['off_court']} off court")
                 
                 # Print per-court details if multiple courts
                 if result.get('courts_detected', 0) > 1 and 'per_court_counts' in result:
                     for court_idx, counts in enumerate(result['per_court_counts']):
-                        print(f"  Court #{court_idx+1}: {counts['on_green']} on green, {counts['on_blue']} on blue, {counts['on_court_other']} on other court areas")
+                        court_in_count = counts['on_green'] if IN_BOUNDS_COLOR == 'green' else counts['on_blue']
+                        court_out_count = counts['on_green'] if OUT_BOUNDS_COLOR == 'green' else counts['on_blue']
+                        
+                        print(f"  Court #{court_idx+1}: {court_in_count} {in_color_text}, {court_out_count} {out_color_text}, {counts['on_court_other']} on other court areas")
         
     except Exception as e:
         log(f"Error: {str(e)}", "ERROR")
