@@ -94,6 +94,7 @@ Available options:
 - `--batch`: Process all images in the input directory
 - `--debug-masks`: Save visualization images of the detected green and blue court areas
 - `--show-court-outline`: Display the green court outline in the output image
+- `--auto-convert`: Automatically convert JPG and WebP images to PNG format before processing
 
 ### Output Modes
 
@@ -143,6 +144,11 @@ python main.py --debug-masks
 Process with court outline shown:
 ```
 python main.py --show-court-outline
+```
+
+Process a JPG image with automatic conversion to PNG:
+```
+python main.py --input images/court.jpg --auto-convert
 ```
 
 ## How It Works

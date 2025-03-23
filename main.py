@@ -327,11 +327,32 @@ def is_person_on_court(person_bbox, court_data):
         return 'on_court'
 
 def process_image(input_path, output_path, model_path, conf_threshold=DEFAULT_CONFIDENCE, 
-                 save_output=True, save_debug_images=False):
+                 save_output=True, save_debug_images=False, auto_convert=False):
     """
     Process the image to detect court and people
     """
     start_time = time.time()
+    
+    # Check if input is JPG or WebP and conversion is enabled
+    input_ext = os.path.splitext(input_path)[1].lower()
+    is_jpg_or_webp = input_ext in ['.jpg', '.jpeg', '.webp']
+    
+    if is_jpg_or_webp and auto_convert:
+        log(f"Detected {input_ext} format. Converting to PNG...", "INFO")
+        # Load the image
+        image = cv2.imread(input_path)
+        if image is None:
+            raise FileNotFoundError(f"Could not load image from {input_path}")
+            
+        # Generate a temporary PNG filename
+        converted_path = os.path.splitext(input_path)[0] + "_converted.png"
+        
+        # Save as PNG
+        cv2.imwrite(converted_path, image)
+        log(f"Converted image saved to {converted_path}", "SUCCESS")
+        
+        # Use the converted file for further processing
+        input_path = converted_path
     
     # Load image
     log(f"Loading image from {input_path}")
@@ -488,7 +509,7 @@ def process_image(input_path, output_path, model_path, conf_threshold=DEFAULT_CO
     }
 
 def process_images(input_paths, output_dir, model_path, conf_threshold=DEFAULT_CONFIDENCE, 
-                 save_output=True, save_debug_images=False):
+                 save_output=True, save_debug_images=False, auto_convert=False):
     """
     Process multiple images
     """
@@ -505,7 +526,7 @@ def process_images(input_paths, output_dir, model_path, conf_threshold=DEFAULT_C
         try:
             # Process each image
             result = process_image(input_path, output_path, model_path, conf_threshold, 
-                                 save_output, save_debug_images)
+                                 save_output, save_debug_images, auto_convert)
             if result:
                 result['input_file'] = input_path
                 result['output_file'] = output_path
@@ -556,6 +577,8 @@ def main():
                       help="Save debug images of the court masks")
     parser.add_argument("--show-court-outline", action="store_true",
                       help="Show the court outline in the output image")
+    parser.add_argument("--auto-convert", action="store_true",
+                      help="Automatically convert JPG and WebP images to PNG before processing")
     args = parser.parse_args()
     
     # Set output modes based on flags
@@ -600,7 +623,7 @@ def main():
                 
                 # Process all images
                 results = process_images(input_files, output_dir, model_path, 
-                                       args.confidence, not args.no_save, args.debug_masks)
+                                       args.confidence, not args.no_save, args.debug_masks, args.auto_convert)
             else:
                 log(f"{args.input} is not a directory. Cannot use batch mode.", "ERROR")
                 return
@@ -618,7 +641,7 @@ def main():
             
             # Process single image
             result = process_image(args.input, args.output, model_path, args.confidence, 
-                                 save_output=not args.no_save, save_debug_images=args.debug_masks)
+                                 save_output=not args.no_save, save_debug_images=args.debug_masks, auto_convert=args.auto_convert)
             
             # In summary-only mode, print a clean one-line summary
             if SUMMARY_ONLY and result:
