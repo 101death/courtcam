@@ -16,6 +16,7 @@ import io
 from datetime import datetime
 from contextlib import redirect_stdout, redirect_stderr
 import contextlib
+import threading
 
 # === CONFIGURATION SETTINGS ===
 class Config:
@@ -39,13 +40,13 @@ class Config:
     
     # Court detection parameters
     class Court:
-        MIN_AREA = 5000              # Minimum court area
-        MAX_AREA = 150000            # Maximum court area
+        MIN_AREA = 3000              # Reduced from 5000 to detect smaller courts
+        MAX_AREA = 200000            # Increased from 150000 to detect larger courts
         MIN_SCORE = 0.5              # Minimum score for a valid court
-        MIN_ASPECT_RATIO = 1.2       # Minimum aspect ratio (width/height)
-        MAX_ASPECT_RATIO = 3.0       # Maximum aspect ratio (width/height)
-        MIN_BLUE_RATIO = 0.3         # Minimum ratio of blue pixels
-        MIN_GREEN_RATIO = 0.05       # Minimum ratio of green pixels
+        MIN_ASPECT_RATIO = 1.0       # Reduced from 1.2 to allow more court shapes
+        MAX_ASPECT_RATIO = 4.0       # Increased from 3.0 to allow wider courts
+        MIN_BLUE_RATIO = 0.2         # Reduced from 0.3 to be more lenient
+        MIN_GREEN_RATIO = 0.02       # Reduced from 0.05 to be more lenient
     
     # Morphological operation settings
     class Morphology:
@@ -67,8 +68,8 @@ class Config:
         FONT_SCALE = 0.5                         # Text size
         TEXT_THICKNESS = 2                       # Text thickness
         DRAW_COURT_OUTLINE = True                # Whether to draw court outline
-        SHOW_COURT_NUMBER = False                # Whether to show court number in labels
-        SHOW_DETAILED_LABELS = False             # Whether to show detailed labels on output image
+        SHOW_COURT_NUMBER = True                # Whether to show court number in labels
+        SHOW_DETAILED_LABELS = True             # Whether to show detailed labels on output image
     
     # Terminal output settings
     class Output:
@@ -224,15 +225,15 @@ class OutputManager:
         return court_counts
     
     @classmethod
-    def create_final_summary(cls, people_count, court_counts, output_path=None, processing_time=None):
+    def create_final_summary(cls, people_count, court_counts, output_path=None, processing_time=None, total_courts=None):
         """Create a final summary line with errors/warnings if any"""
         # Base summary parts
         summary_parts = []
         
         # Start with what was successful
         if people_count is not None:
-            # Include court count in the summary
-            court_count = len(court_counts) if court_counts else 0
+            # Use the total number of courts passed in
+            court_count = total_courts if total_courts is not None else 0
             
             # Format the main summary line
             if people_count == 0:
@@ -361,9 +362,6 @@ def suppress_stdout_stderr():
         # Restore the original stdout and stderr
         sys.stdout = old_stdout
         sys.stderr = old_stderr
-        
-        # You can access captured output if needed via stdout_buffer.getvalue() 
-        # and stderr_buffer.getvalue()
 
 def create_blue_mask(image):
     """Create a mask for blue areas in the image"""
@@ -480,7 +478,15 @@ def detect_tennis_court(image, debug_folder=None):
         perimeter = cv2.arcLength(hull, True)
         approx = cv2.approxPolyDP(hull, 0.02 * perimeter, True)
         
-        # Save court info
+        # Calculate centroid
+        M = cv2.moments(contour)
+        if M["m00"] != 0:
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+        else:
+            cx, cy = x + w//2, y + h//2
+        
+        # Save court info with all required keys
         court_info = {
             'contour': contour,
             'approx': approx,
@@ -491,7 +497,9 @@ def detect_tennis_court(image, debug_folder=None):
             'blue_mask': blue_area,
             'green_mask': green_nearby,
             'blue_pixels': blue_pixels,
-            'green_pixels': green_nearby_pixels
+            'green_pixels': green_nearby_pixels,
+            'centroid': (cx, cy),
+            'bbox': (x, y, w, h)
         }
         
         valid_courts.append(court_info)
@@ -513,7 +521,7 @@ def detect_tennis_court(image, debug_folder=None):
                 cv2.drawContours(courts_viz, [court['approx']], 0, Config.Visual.COURT_OUTLINE_COLOR, 2)
                 
                 # Add court number
-                x, y, w, h = cv2.boundingRect(court['approx'])
+                x, y, w, h = court['bbox']
                 cv2.putText(courts_viz, f"Court {i+1}", (x + w//2 - 40, y + h//2),
                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
             
@@ -530,18 +538,40 @@ def detect_people(image):
     # Set the yolov5 model path
     yolov5_path = os.path.join(Config.Paths.MODELS_DIR, f'{Config.Model.NAME}.pt')
     
-    # Suppress YOLOv5 output
-    with suppress_stdout_stderr():
-        # Load the model
-        model = torch.hub.load('ultralytics/yolov5', 'custom', path=yolov5_path, verbose=False)
-        
-        # Set model parameters
-        model.conf = Config.Model.CONFIDENCE
-        model.iou = Config.Model.IOU
-        model.classes = Config.Model.CLASSES
-        
-        # Perform detection
-        results = model(image)
+    # Create loading animation with simpler characters for better compatibility
+    animation = ["-", "\\", "|", "/"]
+    idx = 0
+    animation_start_time = time.time()
+    stop_animation = False
+    
+    def update_loading():
+        nonlocal idx, animation_start_time
+        while not stop_animation:
+            if time.time() - animation_start_time > 0.2:  # Update every 200ms for smoother animation
+                idx = (idx + 1) % len(animation)
+                animation_start_time = time.time()
+                # Clear the line and print new animation
+                print(f"\rLooking for people {animation[idx]}", end="", flush=True)
+            time.sleep(0.05)  # Increased sleep time to reduce CPU usage
+    
+    # Start animation thread
+    animation_thread = threading.Thread(target=update_loading)
+    animation_thread.daemon = True  # Thread will exit when main program exits
+    animation_thread.start()
+    
+    try:
+        # Load the model with suppressed output
+        with suppress_stdout_stderr():
+            model = torch.hub.load('ultralytics/yolov5', 'custom', path=yolov5_path, verbose=False)
+            model.conf = Config.Model.CONFIDENCE
+            model.iou = Config.Model.IOU
+            model.classes = Config.Model.CLASSES
+            results = model(image)
+    finally:
+        # Stop animation and clear the line
+        stop_animation = True
+        animation_thread.join(timeout=0.2)  # Increased timeout for smoother cleanup
+        print("\r" + " " * 50 + "\r", end="", flush=True)
     
     # Extract people detections
     people = []
@@ -576,16 +606,22 @@ def is_person_on_court(person, courts):
     """
     Determine if a person is on a tennis court.
     Returns (court_index, area_type) where area_type is 'in_bounds', 'out_bounds', or 'off_court'
-    Uses foot position for more accurate placement.
+    Uses bottom half of bounding box for more accurate placement.
     """
-    # Extract foot position
-    if 'foot_position' in person:
-        foot_x, foot_y = person['foot_position']
-    else:
-        # Fall back to center position if foot position isn't available
-        foot_x, foot_y = person['position']
+    # Get the bounding box coordinates
+    x1, y1, x2, y2 = person['bbox']
     
-    foot_point = Point(foot_x, foot_y)
+    # Calculate the bottom half of the bounding box
+    bottom_y1 = y1 + (y2 - y1) // 2  # Start from middle of box
+    bottom_y2 = y2  # End at bottom of box
+    
+    # Create points for the bottom half of the bounding box
+    bottom_points = [
+        Point(x1, bottom_y1),
+        Point(x2, bottom_y1),
+        Point(x2, bottom_y2),
+        Point(x1, bottom_y2)
+    ]
     
     # Check each court
     for court_idx, court in enumerate(courts):
@@ -594,26 +630,27 @@ def is_person_on_court(person, courts):
         points = approx.reshape(-1, 2)
         court_polygon = Polygon(points)
         
-        # Check if the foot position is inside the court
-        if court_polygon.contains(foot_point):
-            # Person is on this court - now determine if they're on blue (in-bounds) or green (out-bounds)
-            x, y = foot_x, foot_y
-            
-            # Check if the foot is on blue area (in-bounds)
-            blue_mask = court['blue_mask']
-            if y < blue_mask.shape[0] and x < blue_mask.shape[1] and blue_mask[y, x] > 0:
-                return court_idx, 'in_bounds'
-            
-            # Check if the foot is on green area (out-bounds)
-            green_mask = court['green_mask']
-            if y < green_mask.shape[0] and x < green_mask.shape[1] and green_mask[y, x] > 0:
-                return court_idx, 'out_bounds'
-            
-            # If not specifically on blue or green, consider it in-bounds if the court has more blue than green
-            if court['blue_ratio'] > court['green_ratio']:
-                return court_idx, 'in_bounds'
-            else:
-                return court_idx, 'out_bounds'
+        # Check if any of the bottom points are inside the court
+        for point in bottom_points:
+            if court_polygon.contains(point):
+                # Person is on this court - now determine if they're on blue (in-bounds) or green (out-bounds)
+                x, y = int(point.x), int(point.y)
+                
+                # Check if the point is on blue area (in-bounds)
+                blue_mask = court['blue_mask']
+                if y < blue_mask.shape[0] and x < blue_mask.shape[1] and blue_mask[y, x] > 0:
+                    return court_idx, 'in_bounds'
+                
+                # Check if the point is on green area (out-bounds)
+                green_mask = court['green_mask']
+                if y < green_mask.shape[0] and x < green_mask.shape[1] and green_mask[y, x] > 0:
+                    return court_idx, 'out_bounds'
+                
+                # If not specifically on blue or green, consider it in-bounds if the court has more blue than green
+                if court['blue_ratio'] > court['green_ratio']:
+                    return court_idx, 'in_bounds'
+                else:
+                    return court_idx, 'out_bounds'
     
     # If we reached here, the person is not on any court
     return -1, 'off_court'
@@ -638,12 +675,44 @@ def assign_court_numbers(blue_mask_connected):
             w = stats[i, cv2.CC_STAT_WIDTH]
             h = stats[i, cv2.CC_STAT_HEIGHT]
             
-            courts.append({
-                'id': i,
-                'area': area,
-                'bbox': (x, y, w, h),
-                'centroid': centroids[i]
-            })
+            # Create a mask for this court
+            court_mask = (labels == i).astype(np.uint8) * 255
+            
+            # Find contours of the court
+            contours, _ = cv2.findContours(court_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
+                contour = contours[0]  # Use the largest contour
+                
+                # Get convex hull for better shape
+                hull = cv2.convexHull(contour)
+                
+                # Approximate polygon
+                perimeter = cv2.arcLength(hull, True)
+                approx = cv2.approxPolyDP(hull, 0.02 * perimeter, True)
+                
+                # Calculate centroid
+                M = cv2.moments(contour)
+                if M["m00"] != 0:
+                    cx = int(M["m10"] / M["m00"])
+                    cy = int(M["m01"] / M["m00"])
+                else:
+                    cx, cy = x + w//2, y + h//2
+                
+                courts.append({
+                    'id': i,
+                    'area': area,
+                    'bbox': (x, y, w, h),
+                    'centroid': centroids[i],
+                    'contour': contour,
+                    'approx': approx,
+                    'hull': hull,
+                    'blue_ratio': 1.0,  # This is a blue region
+                    'green_ratio': 0.0,  # Will be updated later
+                    'blue_mask': court_mask,
+                    'green_mask': np.zeros_like(court_mask),  # Will be updated later
+                    'blue_pixels': area,
+                    'green_pixels': 0  # Will be updated later
+                })
     
     # Sort courts by x-coordinate to assign numbers from left to right
     courts.sort(key=lambda c: c['centroid'][0])
@@ -681,7 +750,8 @@ def main():
                 people_count=None, 
                 court_counts={}, 
                 output_path=None,
-                processing_time=processing_time
+                processing_time=processing_time,
+                total_courts=0
             )
             print_error_summary(final_summary)
             return 1
@@ -692,7 +762,8 @@ def main():
             people_count=None, 
             court_counts={}, 
             output_path=None,
-            processing_time=processing_time
+            processing_time=processing_time,
+            total_courts=0
         )
         print_error_summary(final_summary)
         return 1
@@ -744,7 +815,7 @@ def main():
             green_nearby_pixels = cv2.countNonZero(green_nearby)
             
             # Only keep blue regions that have at least some green nearby
-            if green_nearby_pixels > 50:  # Minimum threshold for green pixels
+            if green_nearby_pixels > 30:  # Reduced from 50 to be more lenient
                 # This is likely a court (not sky) - keep it
                 filtered_court_mask[region > 0] = court_mask[region > 0]
         
@@ -855,47 +926,7 @@ def main():
         people_locations = []
         
         for person in people:
-            # Get foot position
-            if 'foot_position' in person:
-                foot_x, foot_y = person['foot_position']
-            else:
-                foot_x, foot_y = person['position']
-            
-            # Check if foot is on blue (in-bounds) or green (out-bounds)
-            if foot_y < height and foot_x < width:
-                # Check which court number the person is on
-                if blue_mask_raw[foot_y, foot_x] > 0 and green_mask[foot_y, foot_x] == 0 and court_mask[foot_y, foot_x] > 0:
-                    # On blue area and not on green area (in-bounds)
-                    # Get the court number
-                    court_number = court_numbers_mask[foot_y, foot_x]
-                    if court_number > 0:
-                        court_idx = court_number - 1  # Convert court number to zero-based index
-                        area_type = 'in_bounds'
-                    else:
-                        court_idx = -1
-                        area_type = 'off_court'
-                elif green_mask[foot_y, foot_x] > 0:
-                    # On green area (out-bounds)
-                    # Check nearby blue to determine the court number
-                    nearby_mask = np.zeros((height, width), dtype=np.uint8)
-                    cv2.circle(nearby_mask, (foot_x, foot_y), 20, 255, -1)
-                    nearby_courts = cv2.bitwise_and(court_numbers_mask, court_numbers_mask, mask=nearby_mask)
-                    unique_courts = np.unique(nearby_courts)
-                    if len(unique_courts) > 1:  # First value is 0 (background)
-                        court_number = unique_courts[1]
-                        court_idx = court_number - 1
-                        area_type = 'out_bounds'
-                    else:
-                        court_idx = -1
-                        area_type = 'off_court'
-                else:
-                    # Not on any colored area
-                    court_idx = -1
-                    area_type = 'off_court'
-            else:
-                court_idx = -1
-                area_type = 'off_court'
-            
+            court_idx, area_type = is_person_on_court(person, courts)
             people_locations.append((court_idx, area_type))
         
         # Display summary and get court counts - simplify to avoid repetition
@@ -1019,7 +1050,8 @@ def main():
             people_count=len(people),
             court_counts=court_counts,
             output_path=output_path,
-            processing_time=processing_time
+            processing_time=processing_time,
+            total_courts=len(courts)  # Pass the total number of courts
         )
         
         # Print the final summary with decorative borders
