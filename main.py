@@ -287,15 +287,15 @@ class OutputManager:
             # Module not found errors
             if "ModuleNotFoundError" in error or "No module named" in error:
                 module_name = error.split("'")[1] if "'" in error else "unknown"
-                messages.append(f"Missing module: {module_name}\nRun: pip install {module_name}")
+                messages.append(f"Missing module: {module_name}\nRun: pip install -r requirements.txt\n\nIf requirements.txt doesn't exist, create it with:\ntorch>=2.0.0\ntorchvision>=0.15.0\nnumpy>=1.24.0\nshapely>=2.0.0")
                 
             # Torch/CUDA errors
             elif "CUDA" in error or "cuda" in error:
-                messages.append("CUDA error detected\nRun: pip install torch==2.2.0 torchvision==0.17.0 --index-url https://download.pytorch.org/whl/cu118")
+                messages.append("CUDA error detected\nRun: pip install -r requirements.txt\n\nMake sure requirements.txt includes:\ntorch>=2.0.0\ntorchvision>=0.15.0")
                 
             # OpenCV errors
             elif "cv2" in error or "OpenCV" in error:
-                messages.append("OpenCV error detected\nRun: pip install opencv-python>=4.8.0")
+                messages.append("OpenCV error detected\nRun: pip install -r requirements.txt\n\nMake sure requirements.txt includes:\nopencv-python>=4.8.0")
                 
             # YOLOv5 model errors
             elif "model" in error.lower() and ("yolo" in error.lower() or "not found" in error.lower()):
@@ -310,7 +310,7 @@ class OutputManager:
                 
             # Shapely errors
             elif "shapely" in error.lower():
-                messages.append("Shapely error detected\nRun: pip install shapely>=2.0.0")
+                messages.append("Shapely error detected\nRun: pip install -r requirements.txt\n\nMake sure requirements.txt includes:\nshapely>=2.0.0")
                 
             # Image errors
             elif "Unable to open" in error or "load image" in error:
@@ -816,11 +816,11 @@ def main():
             error_msg = str(e)
             if "model" in error_msg.lower() or "yolo" in error_msg.lower() or "no such file" in error_msg.lower():
                 OutputManager.log(f"YOLOv5 model not found: {error_msg}", "ERROR")
-                solution = "Model missing - run: mkdir -p models && wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O models/yolov5s.pt"
+                solution = "Model missing - run:\n1. Install dependencies: pip install -r requirements.txt\n2. Get model: mkdir -p models && wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O models/yolov5s.pt"
                 OutputManager.log(solution, "ERROR")
             elif "cuda" in error_msg.lower() or "gpu" in error_msg.lower():
                 OutputManager.log(f"CUDA error: {error_msg}", "ERROR")
-                solution = "CUDA error - run: pip install torch==2.2.0 torchvision==0.17.0 --index-url https://download.pytorch.org/whl/cpu"
+                solution = "CUDA error - ensure your requirements.txt has torch>=2.0.0 and run: pip install -r requirements.txt"
                 OutputManager.log(solution, "ERROR")
             else:
                 OutputManager.log(f"Problem detecting people: {error_msg}", "ERROR")
@@ -1097,18 +1097,18 @@ if __name__ == "__main__":
     except ModuleNotFoundError as e:
         # For missing modules, provide direct installation instructions
         module_name = str(e).split("'")[1] if "'" in str(e) else "unknown"
-        error_message = f"Missing module: {module_name}\nRun: pip install {module_name}"
+        error_message = f"Missing module: {module_name}\nRun: pip install -r requirements.txt"
         
-        # Special cases for common modules
-        if module_name == "cv2":
-            error_message = "OpenCV not installed\nRun: pip install opencv-python>=4.8.0"
-        elif module_name == "torch":
-            error_message = "PyTorch not installed\nRun: pip install torch==2.2.0 torchvision==0.17.0 --index-url https://download.pytorch.org/whl/cu118"
-        elif module_name == "shapely":
-            error_message = "Shapely not installed\nRun: pip install shapely>=2.0.0"
-        elif module_name == "numpy":
-            error_message = "NumPy not installed\nRun: pip install numpy>=1.26.0"
-            
+        # Add requirements.txt content if it doesn't exist
+        requirements_content = """# Tennis Court Detector requirements
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.24.0
+opencv-python>=4.8.0
+shapely>=2.0.0
+"""
+        error_message += f"\n\nIf requirements.txt doesn't exist, create it with this content:\n{requirements_content}"
+        
         # Create a simple formatted box to display the error
         print("\n" + "╭" + "─" * 78 + "╮")
         print("│ " + "ERROR: MODULE NOT FOUND".center(78) + " │")
