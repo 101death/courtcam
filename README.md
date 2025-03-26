@@ -14,7 +14,7 @@
 
 This system uses computer vision and machine learning to detect tennis courts and track people on them, providing real-time analysis of who is in-bounds or out-of-bounds on each court. Perfect for tennis facilities, coaches, and event organizers who need automated court monitoring.
 
-### Key Features
+### Features
 
 - **Court Detection**: Automatically identifies tennis courts using color analysis
 - **People Tracking**: Detects and tracks people using YOLOv5 object detection
@@ -32,58 +32,89 @@ This system uses computer vision and machine learning to detect tennis courts an
 
 ### Installation
 
-1. Clone this repository:
+1. Clone repository:
    ```bash
    git clone https://github.com/yourusername/tennis-court-detection.git
    cd tennis-court-detection
    ```
 
-2. Create a virtual environment (recommended):
+2. Create virtual environment (recommended):
    ```bash
    python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
-3. Install dependencies:
+3. Install the dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-### Basic Usage
+### Usage
 
-1. Place your tennis court image in the `images` folder with the name `input.png`
-2. Run the main script:
+1. Place tennis court image in the `images` folder with the name `input.png`
+2. Run script:
    ```bash
    python main.py
    ```
 3. Find the output in `images/output.png`
 
-## Example Commands
+## Command-Line Arguments
 
-### Process a single image with default settings
+Command line arguments to change stuff temporarily:
+
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `--input` | Path to input image | `images/input.png` |
+| `--output` | Path for output image | `images/output.png` |
+| `--debug` | Enable debug mode with additional outputs | `False` |
+| `--quiet` | Reduce console output | `False` |
+| `--show-labels` | Show detailed labels on output image | `False` |
+| `--show-court-labels` | Show court numbers on output image | `False` |
+
+### Example Commands
+
+#### Process a single image with default settings
 ```bash
 python main.py
 ```
 
-### Process a specific image with custom output path
+#### Process a specific image with custom output path
 ```bash
-python main.py --input images/my_court.png --output results/analyzed_court.png
+python main.py --input my_courts.png --output results.png
 ```
 
-### Increase detection confidence for more precise results
+#### Enable debug mode for additional visualization outputs
 ```bash
-python main.py --confidence 0.65
+python main.py --debug
 ```
 
-### Process all images in a directory
+#### Generate clean output without detailed labels
 ```bash
-python main.py --input images/matches/ --output results/ --batch
+python main.py  # Labels are hidden by default
 ```
 
-### Generate only summary statistics without visual output
+#### Show detailed labels on the output image
 ```bash
-python main.py --summary --no-save
+python main.py --show-labels
 ```
+
+#### Show court numbers on the output image
+```bash
+python main.py --show-court-labels
+```
+
+## Output Visualization
+
+The output visualization is clean and easy to understand:
+
+- **Default Mode**: Shows court outlines, people with color-coded bounding boxes, and minimal labels
+- **Detailed Mode**: Add `--show-labels` to see detailed information about each person and their court position
+
+### Color Coding
+
+- **Green**: People in-bounds on a court
+- **Orange**: People on court sidelines (out-of-bounds)
+- **Red**: People not on any court
 
 ## Configuration
 
@@ -117,17 +148,7 @@ class Visual:
     PERSON_IN_BOUNDS_COLOR = (0, 255, 0)     # Green for people in-bounds
     PERSON_OUT_BOUNDS_COLOR = (0, 165, 255)  # Orange for people out-of-bounds
     PERSON_OFF_COURT_COLOR = (0, 0, 255)     # Red for people off court
-    FONT_SCALE = 0.5                         # Text size for labels
-```
-
-### Output Settings
-
-```python
-class Output:
-    VERBOSE = True               # Show detailed output
-    USE_COLOR_OUTPUT = True      # Use colored terminal output
-    SHOW_TIMESTAMP = True        # Show timestamps in output
-    SUPER_QUIET = False          # Super quiet mode (almost no output)
+    SHOW_DETAILED_LABELS = False             # Whether to show detailed labels
 ```
 
 ## How It Works
@@ -150,55 +171,12 @@ class Output:
 
 5. **Visualization**:
    - Draws court outlines with unique colors per court
-   - Labels each person with their court number and status
-   - Creates debugging images for analysis
+   - Shows people with color-coded bounding boxes
+   - Optional detailed labels with court information
 
 6. **Summary Reporting**:
-   - Reports counts of people by court and status
+   - Reports counts of people by court and status in a clean box format
    - Provides overall statistics
-
-## Output Examples
-
-### Terminal Output
-
-```
-[12:45:32] ℹ️ Creating color masks for court detection...
-[12:45:33] ✅ Found 2 tennis courts
-[12:45:34] ℹ️ Looking for people in the image...
-[12:45:35] ✅ Found 8 people in the image
-[12:45:35] ℹ️ Detection Summary:
-[12:45:35] ✅ Found 2 tennis courts
-[12:45:35] ✅ Found 8 people in the image
-[12:45:35] ℹ️ Court 1: 3 people
-[12:45:35] ℹ️ Court 2: 3 people
-[12:45:36] ✅ Output image with detection results saved to images/output.png
-[12:45:36] ✅ Found 8 people, 3 in court 1, 3 in court 2, image saved to images/output.png
-```
-
-### Visual Output
-
-The system generates several output files:
-
-- **Main output**: `images/output.png` - Original image with court outlines and people labeled
-- **Debug files** (in `images/debug/`):
-  - `blue_mask_raw.png` - Raw blue areas detection
-  - `green_mask.png` - Green areas detection
-  - `filtered_court_mask.png` - Courts after filtering
-  - `courts_numbered.png` - Each court with a unique color and number
-  - `foot_positions_debug.png` - People's positions on the courts
-
-## Command Line Arguments
-
-| Argument | Description | Default |
-|----------|-------------|---------|
-| `--input` | Path to input image | `images/input.png` |
-| `--output` | Path for output image | `images/output.png` |
-| `--confidence` | Detection confidence threshold | `0.3` |
-| `--batch` | Process all images in input directory | `False` |
-| `--quiet` | Reduce console output | `False` |
-| `--super-quiet` | Show only critical messages | `False` |
-| `--summary` | Show only detection summary | `False` |
-| `--no-save` | Don't save output images | `False` |
 
 ## Troubleshooting
 
@@ -210,37 +188,12 @@ The system generates several output files:
 
 ### People Detection Issues
 
-- **Missing detections**: Decrease the confidence threshold with `--confidence 0.25`
-- **False positives**: Increase the confidence threshold with `--confidence 0.5`
-- **Wrong position classification**: Check the debug images to verify color masks
-
-## Advanced Usage
-
-### Processing Multiple Courts
-
-The system automatically detects and numbers multiple courts in a single image. Each court gets a unique color and ID.
-
-### Customizing Color Thresholds
-
-For courts with different colors:
-
-```python
-# Example for red clay courts
-"red_clay": {
-    "lower": [0, 100, 100],
-    "upper": [10, 255, 255],
-    "lower2": [170, 100, 100],  # Wrap-around for red hue
-    "upper2": [180, 255, 255]
-}
-```
+- **Missing detections**: Lower detection threshold or check YOLOv5 model setup
+- **Wrong position classification**: Use `--debug` to check color masks
 
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Contact
-
-For questions or support, please open an issue on the GitHub repository.
 
 ---
 

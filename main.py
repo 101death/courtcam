@@ -68,6 +68,7 @@ class Config:
         TEXT_THICKNESS = 2                       # Text thickness
         DRAW_COURT_OUTLINE = True                # Whether to draw court outline
         SHOW_COURT_NUMBER = False                # Whether to show court number in labels
+        SHOW_DETAILED_LABELS = False             # Whether to show detailed labels on output image
     
     # Terminal output settings
     class Output:
@@ -133,20 +134,35 @@ class OutputManager:
     UNDERLINE = "\033[4m"
     RESET = "\033[0m"
     
-    # Symbol map for message types
+    # Symbol map for message types - using simpler Unicode symbols
     SYMBOLS = {
-        "INFO": "ℹ️",
-        "SUCCESS": "✅",
-        "WARNING": "⚠️",
-        "ERROR": "❌",
-        "DEBUG": "🔍",
+        "INFO": "→",
+        "SUCCESS": "✓",
+        "WARNING": "!",
+        "ERROR": "✗",
+        "DEBUG": "•",
+        "FATAL": "✗✗",
     }
     
-    @staticmethod
-    def log(message, level="INFO"):
-        """Print formatted log messages with consistent, clean formatting"""
+    # Track messages for summary
+    warnings = []
+    errors = []
+    successes = []
+    info = []
+    
+    @classmethod
+    def reset_logs(cls):
+        """Reset all tracked messages"""
+        cls.warnings = []
+        cls.errors = []
+        cls.successes = []
+        cls.info = []
+    
+    @classmethod
+    def log(cls, message, level="INFO"):
+        """Print formatted log messages with consistent, clean formatting and track for summary"""
         # In super quiet mode, only show errors and success messages
-        if Config.Output.SUPER_QUIET and level not in ["ERROR", "SUCCESS"]:
+        if Config.Output.SUPER_QUIET and level not in ["ERROR", "SUCCESS", "FATAL"]:
             return
             
         if not Config.Output.VERBOSE and level == "DEBUG":
@@ -156,38 +172,41 @@ class OutputManager:
         color = ""
         if Config.Output.USE_COLOR_OUTPUT:
             if level == "INFO":
-                color = OutputManager.BLUE
+                cls.info.append(message)
             elif level == "SUCCESS":
-                color = OutputManager.GREEN
+                color = cls.GREEN
+                cls.successes.append(message)
             elif level == "WARNING":
-                color = OutputManager.YELLOW
-            elif level == "ERROR":
-                color = OutputManager.RED
+                color = cls.YELLOW
+                cls.warnings.append(message)
+            elif level == "ERROR" or level == "FATAL":
+                color = cls.RED
+                cls.errors.append(message)
             elif level == "DEBUG":
-                color = OutputManager.GRAY
+                color = cls.GRAY
         
         # Format timestamp with consistent width
         timestamp = ""
         if Config.Output.SHOW_TIMESTAMP:
-            timestamp = f"{OutputManager.GRAY}[{datetime.now().strftime('%H:%M:%S')}]{OutputManager.RESET} "
+            timestamp = f"{cls.GRAY}[{datetime.now().strftime('%H:%M:%S')}]{cls.RESET} "
         
         # Create symbol prefix
-        symbol = OutputManager.SYMBOLS.get(level, "")
+        symbol = cls.SYMBOLS.get(level, "")
         
         # Format the message with appropriate styling
-        formatted_message = f"{timestamp}{color}{symbol} {message}{OutputManager.RESET}"
+        formatted_message = f"{timestamp}{color}{symbol} {message}{cls.RESET}"
         
         print(formatted_message)
     
-    @staticmethod
-    def summarize_detections(courts, people, people_locations):
+    @classmethod
+    def summarize_detections(cls, courts, people, people_locations):
         """Summarize detection results in a more concise format"""
         if Config.Output.SUPER_QUIET:
-            return
+            return {}
             
-        OutputManager.log(f"{OutputManager.BOLD}Detection Summary:{OutputManager.RESET}", "INFO")
-        OutputManager.log(f"Found {len(courts)} tennis courts", "SUCCESS")
-        OutputManager.log(f"Found {len(people)} people in the image", "SUCCESS")
+        cls.log(f"{cls.BOLD}Detection Summary:{cls.RESET}", "INFO")
+        cls.log(f"Found {len(courts)} tennis courts", "SUCCESS")
+        cls.log(f"Found {len(people)} people in the image", "SUCCESS")
         
         # Count people by court
         court_counts = {}
@@ -200,18 +219,99 @@ class OutputManager:
         
         # Print simplified court-specific counts
         for court_num in sorted(court_counts.keys()):
-            OutputManager.log(f"Court {court_num}: {court_counts[court_num]} people", "INFO")
+            cls.log(f"Court {court_num}: {court_counts[court_num]} people", "INFO")
         
-        # Calculate overall counts for the one-line summary
-        in_bounds_count = sum(1 for _, area_type in people_locations if area_type == 'in_bounds')
-        out_bounds_count = sum(1 for _, area_type in people_locations if area_type == 'out_bounds')
-        off_court_count = sum(1 for _, area_type in people_locations if area_type == 'off_court')
+        return court_counts
+    
+    @classmethod
+    def create_final_summary(cls, people_count, court_counts, output_path=None):
+        """Create a final summary line with errors/warnings if any"""
+        # Base summary parts
+        summary_parts = []
         
-        # Create the parts for the one-line summary
-        court_summary_parts = [f"{count} in court {court_num}" for court_num, count in court_counts.items()]
-        court_summary = ", ".join(court_summary_parts)
+        # Start with what was successful
+        if people_count is not None:
+            # Include court count in the summary
+            court_count = len(court_counts) if court_counts else 0
+            
+            # Format the main summary line
+            if people_count == 0:
+                summary_parts.append(f"detected {court_count} courts, no people")
+            elif court_count == 0:
+                summary_parts.append(f"detected {people_count} {'person' if people_count == 1 else 'people'}, no courts")
+            else:
+                # Format as "detected X courts, N on court 1, M on court 2"
+                court_details = []
+                for court_num in sorted(court_counts.keys()):
+                    count = court_counts[court_num]
+                    if count > 0:
+                        court_details.append(f"{count} on court {court_num}")
+                
+                summary = f"detected {court_count} {'court' if court_count == 1 else 'courts'}"
+                if court_details:
+                    summary += f", {', '.join(court_details)}"
+                summary_parts.append(summary)
         
-        # Final one-line summary will be output later after the image is saved
+        # Create the base summary text
+        final_summary = " ".join(summary_parts)
+        
+        # Add output path in a separate line for better presentation
+        if output_path:
+            final_summary += f"\n\nOutput image saved"
+        
+        # Add errors/warnings differently - in a more natural way
+        if cls.errors or cls.warnings:
+            final_summary += "\n\n"
+            
+            if cls.errors:
+                final_summary += cls.get_potential_fixes()
+            elif cls.warnings and not cls.errors:
+                if len(cls.warnings) == 1:
+                    final_summary += f"Just a heads up: {cls.warnings[0]}"
+                else:
+                    warning_texts = [f"• {w}" for w in cls.warnings]
+                    final_summary += f"A few things to note:\n" + "\n".join(warning_texts)
+        
+        return final_summary
+    
+    @classmethod
+    def get_potential_fixes(cls):
+        """Generate more natural language error messages"""
+        messages = []
+        
+        if not cls.errors:
+            return ""
+            
+        # Look for common error patterns and extract details
+        for error in cls.errors:
+            # Try to extract variable name for undefined variables
+            if "is not defined" in error:
+                var_name = error.split("'")[1] if "'" in error else "a variable"
+                messages.append(f"Looks like {var_name} isn't defined in the code. Check the detection code around line 559.")
+            
+            # Image loading errors
+            elif "Unable to open" in error or "load image" in error:
+                messages.append(f"I couldn't find the image file. Make sure it exists at {Config.Paths.input_path()}.")
+                
+            # Model loading issues
+            elif "model" in error.lower():
+                messages.append(f"There was a problem with the YOLOv5 model. You might need to download it first.")
+                
+            # Permission issues
+            elif any(word in error.lower() for word in ["permission", "access", "denied"]):
+                messages.append(f"I don't have permission to access some files. Try running with higher permissions.")
+                
+            # For any other errors, give a simpler message
+            else:
+                messages.append(f"There was an error: {error}")
+        
+        # Create a more natural message
+        if len(messages) == 1:
+            return messages[0]
+        else:
+            return "I ran into a few issues:\n• " + "\n• ".join(messages)
+            
+        return "\n".join(messages)
 
 @contextlib.contextmanager
 def suppress_stdout_stderr():
@@ -536,19 +636,43 @@ def assign_court_numbers(blue_mask_connected):
 
 def main():
     """Main function"""
+    # Reset any previously tracked logs
+    OutputManager.reset_logs()
+    
     # Load image
     input_path = Config.Paths.input_path()
-    image = cv2.imread(input_path)
-    if image is None:
-        OutputManager.log(f"Could not load image from {input_path}", "ERROR")
+    try:
+        image = cv2.imread(input_path)
+        if image is None:
+            OutputManager.log(f"Unable to open the image at {input_path}", "ERROR")
+            # Show final summary with error and exit
+            final_summary = OutputManager.create_final_summary(
+                people_count=None, 
+                court_counts={}, 
+                output_path=None
+            )
+            OutputManager.log(f"{OutputManager.BOLD}{final_summary}{OutputManager.RESET}", "FATAL")
+            return 1
+    except Exception as e:
+        OutputManager.log(f"Problem loading the image: {str(e)}", "ERROR")
+        final_summary = OutputManager.create_final_summary(
+            people_count=None, 
+            court_counts={}, 
+            output_path=None
+        )
+        OutputManager.log(f"{OutputManager.BOLD}{final_summary}{OutputManager.RESET}", "FATAL")
         return 1
     
     # Set up debug folder
-    debug_folder = Config.Paths.debug_dir()
-    os.makedirs(debug_folder, exist_ok=True)
+    try:
+        debug_folder = Config.Paths.debug_dir()
+        os.makedirs(debug_folder, exist_ok=True)
+    except Exception as e:
+        OutputManager.log(f"Can't create debug folder: {str(e)}", "WARNING")
+        # Continue execution even if debug folder can't be created
     
     # Create color masks for court detection
-    OutputManager.log("Creating color masks for court detection...", "INFO")
+    OutputManager.log("Analyzing court colors in the image...", "INFO")
     blue_mask = create_blue_mask(image)
     green_mask = create_green_mask(image)
     
@@ -593,9 +717,12 @@ def main():
     court_mask = filtered_court_mask
     
     # Save raw masks for debugging
-    cv2.imwrite(os.path.join(debug_folder, "blue_mask_raw.png"), blue_mask_raw)
-    cv2.imwrite(os.path.join(debug_folder, "green_mask.png"), green_mask)
-    cv2.imwrite(os.path.join(debug_folder, "filtered_court_mask.png"), court_mask * 255)
+    try:
+        cv2.imwrite(os.path.join(debug_folder, "blue_mask_raw.png"), blue_mask_raw)
+        cv2.imwrite(os.path.join(debug_folder, "green_mask.png"), green_mask)
+        cv2.imwrite(os.path.join(debug_folder, "filtered_court_mask.png"), court_mask * 255)
+    except Exception as e:
+        OutputManager.log(f"Couldn't save debug masks: {str(e)}", "WARNING")
     
     # Create colored visualization of masks
     court_mask_viz = np.zeros((height, width, 3), dtype=np.uint8)
@@ -607,10 +734,18 @@ def main():
     filtered_blue[court_mask > 0] = [255, 127, 0]  # Bright blue for valid courts
     cv2.addWeighted(court_mask_viz, 1, filtered_blue, 0.7, 0, court_mask_viz)
     
-    cv2.imwrite(os.path.join(debug_folder, "color_masks.png"), court_mask_viz)
+    try:
+        cv2.imwrite(os.path.join(debug_folder, "color_masks.png"), court_mask_viz)
+    except Exception as e:
+        OutputManager.log(f"Couldn't save color visualization: {str(e)}", "WARNING")
     
     # Assign court numbers to each separate blue region
     court_numbers_mask, courts = assign_court_numbers(court_mask)
+    
+    if len(courts) == 0:
+        OutputManager.log("Couldn't find any tennis courts in this image", "WARNING")
+    else:
+        OutputManager.log(f"Found {len(courts)} tennis court{'s' if len(courts) > 1 else ''}", "SUCCESS")
     
     # Create a color-coded court mask for visualization
     court_viz = np.zeros((height, width, 3), dtype=np.uint8)
@@ -639,13 +774,17 @@ def main():
         court_area[court_mask_individual > 0] = court_color
         cv2.addWeighted(court_viz, 1, court_area, 0.7, 0, court_viz)
         
-        # Draw court number at center
-        cx, cy = int(court['centroid'][0]), int(court['centroid'][1])
-        cv2.putText(court_viz, f"Court {court_id}", (cx-40, cy), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        # Draw court number at center only if enabled in debug visualizations too
+        if Config.Visual.SHOW_COURT_LABELS:
+            cx, cy = int(court['centroid'][0]), int(court['centroid'][1])
+            cv2.putText(court_viz, f"Court {court_id}", (cx-40, cy), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
     
     # Save court visualization
-    cv2.imwrite(os.path.join(debug_folder, "courts_numbered.png"), court_viz)
+    try:
+        cv2.imwrite(os.path.join(debug_folder, "courts_numbered.png"), court_viz)
+    except Exception as e:
+        OutputManager.log(f"Couldn't save court visualization: {str(e)}", "WARNING")
     
     # Create a semi-transparent overlay of the masks on the original image
     alpha = 0.5  # Transparency factor
@@ -655,7 +794,17 @@ def main():
     
     # Detect people
     OutputManager.log("Looking for people in the image...", "INFO")
-    people = detect_people(image)
+    try:
+        people = detect_people(image)
+    except Exception as e:
+        OutputManager.log(f"Problem detecting people: {str(e)}", "ERROR")
+        # Continue with empty people list
+        people = []
+    
+    if len(people) == 0:
+        OutputManager.log("No people appear to be in this image", "WARNING")
+    else:
+        OutputManager.log(f"Found {len(people)} {'person' if len(people) == 1 else 'people'} in the image", "SUCCESS")
     
     # Determine if each person is on a court based on masks directly
     people_locations = []
@@ -704,31 +853,18 @@ def main():
             
         people_locations.append((court_idx, area_type))
     
-    # Display summary
-    OutputManager.log(f"{OutputManager.BOLD}Detection Summary:{OutputManager.RESET}", "INFO")
-    OutputManager.log(f"Found {len(courts)} tennis courts", "SUCCESS")
-    OutputManager.log(f"Found {len(people)} people in the image", "SUCCESS")
-    
-    # Count people by location
+    # Display summary and get court counts - simplify to avoid repetition
     court_counts = {}
     for court_idx, area_type in people_locations:
         if court_idx >= 0:
             court_num = court_idx + 1
             if court_num not in court_counts:
-                court_counts[court_num] = {'in_bounds': 0, 'out_bounds': 0}
-            court_counts[court_num][area_type] += 1
+                court_counts[court_num] = 0
+            court_counts[court_num] += 1
     
-    # Print court-specific counts
+    # Log court counts without repeating the detection summary
     for court_num in sorted(court_counts.keys()):
-        counts = court_counts[court_num]
-        OutputManager.log(f"Court {court_num}: {counts['in_bounds']} in-bounds, {counts['out_bounds']} out-bounds", "INFO")
-    
-    # Calculate overall counts
-    in_bounds_count = sum(1 for _, area_type in people_locations if area_type == 'in_bounds')
-    out_bounds_count = sum(1 for _, area_type in people_locations if area_type == 'out_bounds')
-    off_court_count = sum(1 for _, area_type in people_locations if area_type == 'off_court')
-    
-    OutputManager.log(f"Total: {in_bounds_count} in-bounds, {out_bounds_count} out-bounds, {off_court_count} off court", "INFO")
+        OutputManager.log(f"Court {court_num}: {court_counts[court_num]} people", "INFO")
     
     # Create debug visualization showing foot positions on mask
     debug_foot_positions = court_viz.copy()
@@ -742,9 +878,12 @@ def main():
             cv2.putText(debug_foot_positions, f"P{person_idx+1}", (foot_x+15, foot_y), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
     
-    cv2.imwrite(os.path.join(debug_folder, "foot_positions_debug.png"), debug_foot_positions)
+    try:
+        cv2.imwrite(os.path.join(debug_folder, "foot_positions_debug.png"), debug_foot_positions)
+    except Exception as e:
+        OutputManager.log(f"Couldn't save foot positions debug image: {str(e)}", "WARNING")
     
-    # Draw people and their locations on the mask overlay
+    # Draw people and their locations
     output_image = image.copy()
     
     # Draw court outlines with different colors
@@ -761,10 +900,11 @@ def main():
         # Draw the court outline
         cv2.drawContours(output_image, court_contours, -1, court_color, 2)
         
-        # Draw court number at center
-        cx, cy = int(court['centroid'][0]), int(court['centroid'][1])
-        cv2.putText(output_image, f"Court {court_id}", (cx-40, cy), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        # Draw court number at center only if enabled
+        if Config.Visual.SHOW_COURT_LABELS:
+            cx, cy = int(court['centroid'][0]), int(court['centroid'][1])
+            cv2.putText(output_image, f"Court {court_id}", (cx-40, cy), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
     
     # Draw people and their locations
     for person_idx, person in enumerate(people):
@@ -778,55 +918,90 @@ def main():
             court_number = court_idx + 1
             if area_type == 'in_bounds':
                 color = Config.Visual.PERSON_IN_BOUNDS_COLOR
-                label = f"Court {court_number} IN"
+                label = f"Court {court_number}" if Config.Visual.SHOW_DETAILED_LABELS else ""
             else:  # out_bounds
                 color = Config.Visual.PERSON_OUT_BOUNDS_COLOR
-                label = f"Court {court_number} OUT"
+                label = f"Court {court_number} • Sideline" if Config.Visual.SHOW_DETAILED_LABELS else ""
         else:
             color = Config.Visual.PERSON_OFF_COURT_COLOR
-            label = "OFF COURT"
+            label = "Not on court" if Config.Visual.SHOW_DETAILED_LABELS else ""
         
         # Draw bounding box
         cv2.rectangle(output_image, (x1, y1), (x2, y2), color, 2)
         
-        # Draw foot position marker
+        # Draw foot position marker - smaller and less intrusive
         foot_x, foot_y = person['foot_position']
-        cv2.circle(output_image, (foot_x, foot_y), 5, color, -1)
+        cv2.circle(output_image, (foot_x, foot_y), 3, color, -1)
         
-        # Draw label with black background for readability
-        text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 
-                                   Config.Visual.FONT_SCALE, 
-                                   Config.Visual.TEXT_THICKNESS)[0]
-        cv2.rectangle(output_image, (x1, y1 - text_size[1] - 5), 
-                     (x1 + text_size[0], y1), color, -1)
-        cv2.putText(output_image, label, (x1, y1 - 5), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 
-                   Config.Visual.FONT_SCALE, 
-                   Config.Visual.TEXT_COLOR, 
-                   Config.Visual.TEXT_THICKNESS)
-        
-        # Add person index number
-        cv2.putText(output_image, f"P{person_idx+1}", (x1, y2 + 20), 
-                    cv2.FONT_HERSHEY_SIMPLEX, Config.Visual.FONT_SCALE, 
-                    color, Config.Visual.TEXT_THICKNESS)
+        # Only draw text labels if specified
+        if Config.Visual.SHOW_DETAILED_LABELS and label:
+            # Draw label with black background for readability
+            text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 
+                                       Config.Visual.FONT_SCALE, 
+                                       Config.Visual.TEXT_THICKNESS)[0]
+            cv2.rectangle(output_image, (x1, y1 - text_size[1] - 5), 
+                         (x1 + text_size[0], y1), color, -1)
+            cv2.putText(output_image, label, (x1, y1 - 5), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 
+                       Config.Visual.FONT_SCALE, 
+                       Config.Visual.TEXT_COLOR, 
+                       Config.Visual.TEXT_THICKNESS)
+            
+            # Add person index number
+            cv2.putText(output_image, f"Person {person_idx+1}", (x1, y2 + 20), 
+                        cv2.FONT_HERSHEY_SIMPLEX, Config.Visual.FONT_SCALE, 
+                        color, Config.Visual.TEXT_THICKNESS)
+        else:
+            # Just add a small number indicator for simpler display
+            cv2.putText(output_image, f"{person_idx+1}", (x1, y1 - 5), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 
+                       Config.Visual.FONT_SCALE, 
+                       Config.Visual.TEXT_COLOR, 
+                       Config.Visual.TEXT_THICKNESS)
     
     # Save the final output image
     output_path = Config.Paths.output_path()
-    cv2.imwrite(output_path, output_image)
-    OutputManager.log(f"Output image with detection results saved to {output_path}", "SUCCESS")
+    try:
+        cv2.imwrite(output_path, output_image)
+        OutputManager.log(f"Output image saved", "SUCCESS")
+    except Exception as e:
+        OutputManager.log(f"Error saving output image: {str(e)}", "ERROR")
+        output_path = None
     
-    # Print final one-line summary of all results
-    court_summary_parts = []
-    for court_num in sorted(court_counts.keys()):
-        court_summary_parts.append(f"{court_counts[court_num]} in court {court_num}")
+    # Create the adaptive final summary
+    final_summary = OutputManager.create_final_summary(
+        people_count=len(people),
+        court_counts=court_counts,
+        output_path=output_path
+    )
     
-    if court_summary_parts:
-        court_summary = ", ".join(court_summary_parts)
-        final_summary = f"Found {len(people)} people, {court_summary}, image saved to {output_path}"
-    else:
-        final_summary = f"Found {len(people)} people, none on courts, image saved to {output_path}"
+    # Print the final summary with decorative borders
+    border_width = 80
+    top_border = "╭" + "─" * (border_width - 2) + "╮"
+    middle_border = "├" + "─" * (border_width - 2) + "┤"
+    bottom_border = "╰" + "─" * (border_width - 2) + "╯"
     
-    OutputManager.log(f"{OutputManager.BOLD}{final_summary}{OutputManager.RESET}", "SUCCESS")
+    print("\n" + top_border)
+    print("│ " + "RESULTS SUMMARY".center(border_width - 4) + " │")
+    print(middle_border)
+    print("│ " + " " * (border_width - 4) + " │")
+    
+    # Split the summary by lines and format each line
+    summary_lines = final_summary.split('\n')
+    for line in summary_lines:
+        # Handle empty lines
+        if not line.strip():
+            print("│ " + " " * (border_width - 4) + " │")
+        else:
+            # Format line to fit within border
+            print("│ " + line.ljust(border_width - 4)[:border_width - 4] + " │")
+    
+    print("│ " + " " * (border_width - 4) + " │")
+    print(bottom_border)
+    
+    # If there were errors that didn't cause a fatal exit, still indicate an error status
+    if OutputManager.errors:
+        return 1
     
     return 0
 
@@ -836,4 +1011,28 @@ def log(message, level="INFO"):
     OutputManager.log(message, level)
 
 if __name__ == "__main__":
+    # Add command-line arguments for easier use
+    parser = argparse.ArgumentParser(description="Tennis Court Detection System")
+    parser.add_argument("--input", type=str, help="Path to input image", default=Config.Paths.input_path())
+    parser.add_argument("--output", type=str, help="Path for output image", default=Config.Paths.output_path())
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode with additional outputs")
+    parser.add_argument("--quiet", action="store_true", help="Reduce console output")
+    parser.add_argument("--show-labels", action="store_true", help="Show detailed labels on output image")
+    parser.add_argument("--show-court-labels", action="store_true", help="Show court numbers on output image")
+    args = parser.parse_args()
+    
+    # Update config based on arguments
+    if args.input != Config.Paths.input_path():
+        Config.Paths.INPUT_IMAGE = os.path.basename(args.input)
+        Config.Paths.IMAGES_DIR = os.path.dirname(args.input)
+    
+    if args.output != Config.Paths.output_path():
+        Config.Paths.OUTPUT_IMAGE = os.path.basename(args.output)
+        Config.Paths.IMAGES_DIR = os.path.dirname(args.output)
+    
+    Config.DEBUG_MODE = args.debug
+    Config.Output.VERBOSE = not args.quiet
+    Config.Visual.SHOW_DETAILED_LABELS = args.show_labels
+    Config.Visual.SHOW_COURT_LABELS = args.show_court_labels
+    
     sys.exit(main())
