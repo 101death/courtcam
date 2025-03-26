@@ -206,7 +206,7 @@ class OutputManager:
             
         cls.log(f"{cls.BOLD}Detection Summary:{cls.RESET}", "INFO")
         cls.log(f"Found {len(courts)} tennis courts", "SUCCESS")
-        cls.log(f"Found {len(people)} people in the image", "SUCCESS")
+        cls.log(f"Found {len(people)} {'person' if len(people) == 1 else 'people'} in the image", "SUCCESS")
         
         # Count people by court
         court_counts = {}
@@ -219,12 +219,12 @@ class OutputManager:
         
         # Print simplified court-specific counts
         for court_num in sorted(court_counts.keys()):
-            cls.log(f"Court {court_num}: {court_counts[court_num]} people", "INFO")
+            cls.log(f"Court {court_num}: {court_counts[court_num]} {'person' if court_counts[court_num] == 1 else 'people'}", "INFO")
         
         return court_counts
     
     @classmethod
-    def create_final_summary(cls, people_count, court_counts, output_path=None):
+    def create_final_summary(cls, people_count, court_counts, output_path=None, processing_time=None):
         """Create a final summary line with errors/warnings if any"""
         # Base summary parts
         summary_parts = []
@@ -236,20 +236,28 @@ class OutputManager:
             
             # Format the main summary line
             if people_count == 0:
-                summary_parts.append(f"Detected {court_count} courts, no people")
+                summary_parts.append(f"{court_count} {'court was' if court_count == 1 else 'courts were'} detected, no people present")
             elif court_count == 0:
-                summary_parts.append(f"Detected {people_count} {'person' if people_count == 1 else 'people'}, no courts found")
+                summary_parts.append(f"{people_count} {'person was' if people_count == 1 else 'people were'} detected, no tennis courts in frame")
             else:
-                # Format as "detected X courts, N on court 1, M on court 2"
+                # Format details for each court
                 court_details = []
+                total_on_courts = 0
+                
                 for court_num in sorted(court_counts.keys()):
                     count = court_counts[court_num]
+                    total_on_courts += count
                     if count > 0:
                         court_details.append(f"{count} on court {court_num}")
                 
-                summary = f"detected {court_count} {'court' if court_count == 1 else 'courts'}"
-                if court_details:
-                    summary += f", {', '.join(court_details)}"
+                # Create the court details string with "and" between the last two items
+                court_details_str = ""
+                if len(court_details) > 1:
+                    court_details_str = " with " + " and ".join([", ".join(court_details[:-1]), court_details[-1]])
+                elif len(court_details) == 1:
+                    court_details_str = f" with {court_details[0]}"
+                
+                summary = f"{court_count} {'court was' if court_count == 1 else 'courts were'} detected{court_details_str}"
                 summary_parts.append(summary)
         
         # Create the base summary text
@@ -258,6 +266,10 @@ class OutputManager:
         # Add output path in a separate line for better presentation
         if output_path:
             final_summary += f"\n\nOutput image saved"
+        
+        # Add processing time
+        if processing_time:
+            final_summary += f"\n\nProcessing time: {processing_time:.2f} seconds"
         
         # Add errors/warnings differently - in a more natural way
         if cls.errors or cls.warnings:
@@ -287,15 +299,15 @@ class OutputManager:
             # Module not found errors
             if "ModuleNotFoundError" in error or "No module named" in error:
                 module_name = error.split("'")[1] if "'" in error else "unknown"
-                messages.append(f"Missing module: {module_name}\nRun: pip install -r requirements.txt\n\nIf requirements.txt doesn't exist, create it with:\ntorch>=2.0.0\ntorchvision>=0.15.0\nnumpy>=1.24.0\nshapely>=2.0.0")
+                messages.append(f"Missing module: {module_name}\nRun: pip install -r requirements.txt")
                 
             # Torch/CUDA errors
             elif "CUDA" in error or "cuda" in error:
-                messages.append("CUDA error detected\nRun: pip install -r requirements.txt\n\nMake sure requirements.txt includes:\ntorch>=2.0.0\ntorchvision>=0.15.0")
+                messages.append("CUDA error detected\nRun: pip install -r requirements.txt")
                 
             # OpenCV errors
             elif "cv2" in error or "OpenCV" in error:
-                messages.append("OpenCV error detected\nRun: pip install -r requirements.txt\n\nMake sure requirements.txt includes:\nopencv-python>=4.8.0")
+                messages.append("OpenCV error detected\nRun: pip install -r requirements.txt")
                 
             # YOLOv5 model errors
             elif "model" in error.lower() and ("yolo" in error.lower() or "not found" in error.lower()):
@@ -310,7 +322,7 @@ class OutputManager:
                 
             # Shapely errors
             elif "shapely" in error.lower():
-                messages.append("Shapely error detected\nRun: pip install -r requirements.txt\n\nMake sure requirements.txt includes:\nshapely>=2.0.0")
+                messages.append("Shapely error detected\nRun: pip install -r requirements.txt")
                 
             # Image errors
             elif "Unable to open" in error or "load image" in error:
@@ -651,6 +663,9 @@ def assign_court_numbers(blue_mask_connected):
 
 def main():
     """Main function"""
+    # Start timer
+    start_time = time.time()
+    
     # Reset any previously tracked logs
     OutputManager.reset_logs()
     
@@ -661,19 +676,23 @@ def main():
         if image is None:
             OutputManager.log(f"Unable to open the image at {input_path}", "ERROR")
             # Show final summary with error and exit
+            processing_time = time.time() - start_time
             final_summary = OutputManager.create_final_summary(
                 people_count=None, 
                 court_counts={}, 
-                output_path=None
+                output_path=None,
+                processing_time=processing_time
             )
             print_error_summary(final_summary)
             return 1
     except Exception as e:
         OutputManager.log(f"Problem loading the image: {str(e)}", "ERROR")
+        processing_time = time.time() - start_time
         final_summary = OutputManager.create_final_summary(
             people_count=None, 
             court_counts={}, 
-            output_path=None
+            output_path=None,
+            processing_time=processing_time
         )
         print_error_summary(final_summary)
         return 1
@@ -816,11 +835,11 @@ def main():
             error_msg = str(e)
             if "model" in error_msg.lower() or "yolo" in error_msg.lower() or "no such file" in error_msg.lower():
                 OutputManager.log(f"YOLOv5 model not found: {error_msg}", "ERROR")
-                solution = "Model missing - run:\n1. Install dependencies: pip install -r requirements.txt\n2. Get model: mkdir -p models && wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O models/yolov5s.pt"
+                solution = "Model missing - run: mkdir -p models && wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O models/yolov5s.pt"
                 OutputManager.log(solution, "ERROR")
             elif "cuda" in error_msg.lower() or "gpu" in error_msg.lower():
                 OutputManager.log(f"CUDA error: {error_msg}", "ERROR")
-                solution = "CUDA error - ensure your requirements.txt has torch>=2.0.0 and run: pip install -r requirements.txt"
+                solution = "CUDA error - run: pip install -r requirements.txt"
                 OutputManager.log(solution, "ERROR")
             else:
                 OutputManager.log(f"Problem detecting people: {error_msg}", "ERROR")
@@ -995,10 +1014,12 @@ def main():
             output_path = None
         
         # Create the adaptive final summary
+        processing_time = time.time() - start_time
         final_summary = OutputManager.create_final_summary(
             people_count=len(people),
             court_counts=court_counts,
-            output_path=output_path
+            output_path=output_path,
+            processing_time=processing_time
         )
         
         # Print the final summary with decorative borders
@@ -1098,16 +1119,6 @@ if __name__ == "__main__":
         # For missing modules, provide direct installation instructions
         module_name = str(e).split("'")[1] if "'" in str(e) else "unknown"
         error_message = f"Missing module: {module_name}\nRun: pip install -r requirements.txt"
-        
-        # Add requirements.txt content if it doesn't exist
-        requirements_content = """# Tennis Court Detector requirements
-torch>=2.0.0
-torchvision>=0.15.0
-numpy>=1.24.0
-opencv-python>=4.8.0
-shapely>=2.0.0
-"""
-        error_message += f"\n\nIf requirements.txt doesn't exist, create it with this content:\n{requirements_content}"
         
         # Create a simple formatted box to display the error
         print("\n" + "╭" + "─" * 78 + "╮")
