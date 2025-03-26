@@ -1,201 +1,249 @@
-# Tennis Court Camera System
+# Tennis Court Detection System 🎾
 
-This system detects people on a tennis court using computer vision and YOLOv5 object detection, with visual highlights to show who is on or off the court.
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Python: 3.6+](https://img.shields.io/badge/Python-3.6+-blue.svg)
+![OpenCV](https://img.shields.io/badge/CV-OpenCV-green.svg)
+![YOLOv5](https://img.shields.io/badge/Model-YOLOv5-lightgrey.svg)
 
-## Setup
+<div align="center">
+  <img src="https://i.imgur.com/example.png" alt="Tennis Court Detection Example" width="600">
+  <p><i>Example of tennis court detection with people tracking</i></p>
+</div>
 
-1. Ensure you have Python 3.6+ installed
-2. Install the required dependencies:
+## 📋 Overview
+
+This system uses computer vision and machine learning to detect tennis courts and track people on them, providing real-time analysis of who is in-bounds or out-of-bounds on each court. Perfect for tennis facilities, coaches, and event organizers who need automated court monitoring.
+
+### ✨ Key Features
+
+- **Court Detection**: Automatically identifies tennis courts using color analysis
+- **People Tracking**: Detects and tracks people using YOLOv5 object detection
+- **Position Analysis**: Determines if people are in-bounds, out-of-bounds, or off-court
+- **Court Numbering**: Numbers each court and tracks people per court
+- **Rich Visualization**: Outputs images with color-coded courts and player positions
+- **Configuration**: Highly customizable with easy-to-modify settings
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Python 3.6+
+- CUDA-compatible GPU (recommended for faster processing)
+
+### Installation
+
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/yourusername/tennis-court-detection.git
+   cd tennis-court-detection
    ```
+
+2. Create a virtual environment (recommended):
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+3. Install dependencies:
+   ```bash
    pip install -r requirements.txt
    ```
 
-## Usage
+### Basic Usage
 
 1. Place your tennis court image in the `images` folder with the name `input.png`
-2. Run the script:
-   ```
+2. Run the main script:
+   ```bash
    python main.py
    ```
-3. The script will automatically download the YOLOv5 model if needed
-4. The output image with detections will be saved as `images/output.png`
+3. Find the output in `images/output.png`
 
-## Configuration
+## 📊 Example Commands
 
-The script has many configurable settings at the top of the file that you can easily modify:
-
-### Paths and Directories
-```python
-DEFAULT_MODELS_DIR = "models"                # Directory to store models
-DEFAULT_IMAGES_DIR = "images"                # Directory to store images
-DEFAULT_INPUT_IMAGE = "input.png"            # Default input image name
-DEFAULT_OUTPUT_IMAGE = "output.png"          # Default output image name
-```
-
-### Model Settings
-```python
-MODEL_NAME = "yolov5s"                       # YOLOv5 model size (yolov5s, yolov5m, yolov5l, etc.)
-DEFAULT_CONFIDENCE = 0.5                     # Default detection confidence threshold
-```
-
-### Court Detection Settings
-```python
-COURT_COLOR_RANGES = {
-    "green": {
-        "lower": [40, 40, 40],              # Lower HSV range for green courts
-        "upper": [80, 255, 255]             # Upper HSV range for green courts
-    },
-    "blue": {
-        "lower": [90, 40, 40],              # Lower HSV range for blue courts
-        "upper": [130, 255, 255]            # Upper HSV range for blue courts
-    }
-}
-CONTOUR_APPROX_FACTOR = 0.02                 # Contour approximation factor
-```
-
-### Visualization Settings
-```python
-COURT_OUTLINE_COLOR = (0, 255, 0)            # Green
-COURT_OUTLINE_THICKNESS = 2                  # Line thickness
-ON_GREEN_COLOR = (0, 255, 0)                 # Green for people on green court
-ON_BLUE_COLOR = (255, 191, 0)                # Deep sky blue for people on blue court
-ON_COURT_OTHER_COLOR = (0, 255, 255)         # Yellow for people on other court areas
-OFF_COURT_COLOR = (0, 0, 255)                # Red for people outside the court
-TEXT_COLOR = (255, 255, 255)                 # White
-FONT_SCALE = 0.5                             # Text size
-TEXT_THICKNESS = 2                           # Text thickness
-DRAW_COURT_OUTLINE = False                   # Whether to draw court outline (default: False)
-SHOW_COURT_NUMBER = True                     # Whether to show court number in labels (default: True)
-```
-
-### Terminal Output Settings
-```python
-VERBOSE = True                               # Show detailed output
-USE_COLOR_OUTPUT = True                      # Use colored terminal output
-SHOW_TIMESTAMP = True                        # Show timestamps in output
-```
-
-## Command Line Options
-
-You can customize the behavior with these arguments:
-
-```
-python main.py --input your_image.jpg --output results.jpg --confidence 0.6 --quiet
-```
-
-Available options:
-- `--input`: Path to input image or directory of images (default: images/input.png)
-- `--output`: Path to save output image or directory for multiple images (default: images/output.png)
-- `--models-dir`: Directory for storing models (default: models)
-- `--confidence`: Detection confidence threshold (default: 0.5)
-- `--quiet`: Suppress detailed console output
-- `--super-quiet`: Suppress almost all output except errors and success messages
-- `--summary`: Show only the summary count of courts and people detected (one-line output)
-- `--no-save`: Do not save the output image (just analyze)
-- `--batch`: Process all images in the input directory
-- `--debug-masks`: Save visualization images of the detected green and blue court areas
-- `--show-court-outline`: Display the green court outline in the output image
-- `--auto-convert`: Automatically convert JPG and WebP images to PNG format before processing
-- `--no-court-number`: Don't show the court number in the detection labels
-
-### Output Modes
-
-The script has several output modes:
-1. **Normal** - Shows all information, progress updates, and timestamps
-2. **Quiet** (`--quiet`) - Shows less information but keeps important status updates
-3. **Super Quiet** (`--super-quiet`) - Shows only errors and success messages
-4. **Summary** (`--summary`) - Shows just a single line with the count of courts and people detected, like:
-   ```
-   People: 1 court(s), 3 total, 1 on green, 1 on blue, 0 on other court areas, 1 off court
-   ```
-
-### Examples
-
-Basic usage with default settings:
-```
+### Process a single image with default settings
+```bash
 python main.py
 ```
 
-Analyze an image without saving output:
-```
-python main.py --input my_image.jpg --no-save
-```
-
-Quick people count only:
-```
-python main.py --summary
+### Process a specific image with custom output path
+```bash
+python main.py --input images/my_court.png --output results/analyzed_court.png
 ```
 
-Custom model directory and confidence:
-```
-python main.py --models-dir /path/to/models --confidence 0.7
-```
-
-Process all images in a directory:
-```
-python main.py --input images/folder --output results/ --batch
+### Increase detection confidence for more precise results
+```bash
+python main.py --confidence 0.65
 ```
 
-Process a batch of images with summary only:
-```
-python main.py --input images/folder --batch --summary
-```
-
-Process an image and save debug visualization of court areas:
-```
-python main.py --debug-masks
+### Process all images in a directory
+```bash
+python main.py --input images/matches/ --output results/ --batch
 ```
 
-Process with court outline shown:
-```
-python main.py --show-court-outline
-```
-
-Process a JPG image with automatic conversion to PNG:
-```
-python main.py --input images/court.jpg --auto-convert
+### Generate only summary statistics without visual output
+```bash
+python main.py --summary --no-save
 ```
 
-Process an image without showing court numbers in labels:
+## ⚙️ Configuration
+
+The system is highly configurable through the `Config` class in `main.py`. Key configuration sections include:
+
+### Court Detection
+
+```python
+# Color settings for court detection
+COURT_COLORS = {
+    "blue": {
+        "lower": [90, 40, 40],   # Lower HSV range for blue courts (in-bounds)
+        "upper": [120, 255, 255] # Upper HSV range for blue courts
+    },
+    "green": {
+        "lower": [40, 40, 40],   # Lower HSV range for green areas (out-of-bounds)
+        "upper": [80, 255, 255]  # Upper HSV range for green areas
+    }
+}
+
+# Court detection parameters
+class Court:
+    MIN_AREA = 5000              # Minimum court area in pixels
+    MAX_AREA = 150000            # Maximum court area in pixels
 ```
-python main.py --no-court-number
+
+### Visualization
+
+```python
+class Visual:
+    PERSON_IN_BOUNDS_COLOR = (0, 255, 0)     # Green for people in-bounds
+    PERSON_OUT_BOUNDS_COLOR = (0, 165, 255)  # Orange for people out-of-bounds
+    PERSON_OFF_COURT_COLOR = (0, 0, 255)     # Red for people off court
+    FONT_SCALE = 0.5                         # Text size for labels
 ```
 
-## How It Works
+### Output Settings
 
-1. The system detects the tennis court using color segmentation in HSV space, identifying both green and blue areas
-2. It detects people using YOLOv5 object detection
-3. It determines where people are located with detailed classification:
-   - On green court area
-   - On blue court area
-   - On other court areas (lines, net, etc.)
-   - Off court completely
-4. It generates an output image with color-coded bounding boxes:
-   - Green: People on green court areas
-   - Blue/Cyan: People on blue court areas
-   - Yellow: People on other court areas (lines, transitions)
-   - Red: People completely outside the court
-5. Each detection shows the confidence score and specific location
-6. The summary output includes the number of courts detected and people's positions
+```python
+class Output:
+    VERBOSE = True               # Show detailed output
+    USE_COLOR_OUTPUT = True      # Use colored terminal output
+    SHOW_TIMESTAMP = True        # Show timestamps in output
+    SUPER_QUIET = False          # Super quiet mode (almost no output)
+```
 
-## Output Summary
+## 🔧 How It Works
 
-The summary output will show:
-- Number of tennis courts detected
-- Total number of people detected
-- Count of people on green court areas
-- Count of people on blue court areas 
-- Count of people on other court areas (lines, transitions)
-- Count of people off the court completely
+1. **Color Masking**: The system creates masks for blue areas (in-bounds) and green areas (out-of-bounds) using HSV color thresholds.
 
-## Troubleshooting
+2. **Court Identification**: 
+   - Blue regions adjacent to green are identified as potential courts
+   - Small isolated blue regions and those without green nearby are filtered out
+   - Each court is assigned a number for tracking
 
-If you encounter issues with model downloading:
-1. Ensure you have a working internet connection
-2. If SSL issues persist, the script temporarily disables SSL verification
-3. You can manually download the YOLOv5 model from https://github.com/ultralytics/yolov5/releases/ and place it in the `models` directory
+3. **People Detection**:
+   - Uses YOLOv5 to detect people in the image
+   - Calculates foot position for each person
 
-If the court detection doesn't work well:
-- Use the `--debug-masks` option to visualize exactly what areas are being detected as green or blue
-- Adjust the HSV color ranges in the COURT_COLOR_RANGES settings to match your court colors
-- For indoor vs outdoor courts with different lighting, you may need different settings
+4. **Position Analysis**:
+   - Determines if each person is on a blue area (in-bounds)
+   - Checks if they're on a green area (out-of-bounds)
+   - Maps each person to a specific court number
+
+5. **Visualization**:
+   - Draws court outlines with unique colors per court
+   - Labels each person with their court number and status
+   - Creates debugging images for analysis
+
+6. **Summary Reporting**:
+   - Reports counts of people by court and status
+   - Provides overall statistics
+
+## 📊 Output Examples
+
+### Terminal Output
+
+```
+[12:45:32] ℹ️ Creating color masks for court detection...
+[12:45:33] ✅ Found 2 tennis courts
+[12:45:34] ℹ️ Looking for people in the image...
+[12:45:35] ✅ Found 8 people in the image
+[12:45:35] ℹ️ Detection Summary:
+[12:45:35] ✅ Found 2 tennis courts
+[12:45:35] ✅ Found 8 people in the image
+[12:45:35] ℹ️ Court 1: 2 in-bounds, 1 out-bounds
+[12:45:35] ℹ️ Court 2: 3 in-bounds, 0 out-bounds
+[12:45:35] ℹ️ Total: 5 in-bounds, 1 out-bounds, 2 off court
+[12:45:36] ✅ Output image with detection results saved to images/output.png
+```
+
+### Visual Output
+
+The system generates several output files:
+
+- **Main output**: `images/output.png` - Original image with court outlines and people labeled
+- **Debug files** (in `images/debug/`):
+  - `blue_mask_raw.png` - Raw blue areas detection
+  - `green_mask.png` - Green areas detection
+  - `filtered_court_mask.png` - Courts after filtering
+  - `courts_numbered.png` - Each court with a unique color and number
+  - `foot_positions_debug.png` - People's positions on the courts
+
+## 📋 Command Line Arguments
+
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `--input` | Path to input image | `images/input.png` |
+| `--output` | Path for output image | `images/output.png` |
+| `--confidence` | Detection confidence threshold | `0.3` |
+| `--batch` | Process all images in input directory | `False` |
+| `--quiet` | Reduce console output | `False` |
+| `--super-quiet` | Show only critical messages | `False` |
+| `--summary` | Show only detection summary | `False` |
+| `--no-save` | Don't save output images | `False` |
+
+## 🔎 Troubleshooting
+
+### Court Detection Issues
+
+- **Sky detected as courts**: Ensure the green threshold check is working properly
+- **Courts not detected**: Adjust HSV ranges in `Config.COURT_COLORS` to match your court colors
+- **Courts merged together**: The green areas between courts should be properly detected
+
+### People Detection Issues
+
+- **Missing detections**: Decrease the confidence threshold with `--confidence 0.25`
+- **False positives**: Increase the confidence threshold with `--confidence 0.5`
+- **Wrong position classification**: Check the debug images to verify color masks
+
+## 📚 Advanced Usage
+
+### Processing Multiple Courts
+
+The system automatically detects and numbers multiple courts in a single image. Each court gets a unique color and ID.
+
+### Customizing Color Thresholds
+
+For courts with different colors:
+
+```python
+# Example for red clay courts
+"red_clay": {
+    "lower": [0, 100, 100],
+    "upper": [10, 255, 255],
+    "lower2": [170, 100, 100],  # Wrap-around for red hue
+    "upper2": [180, 255, 255]
+}
+```
+
+## 📝 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 📧 Contact
+
+For questions or support, please open an issue on the GitHub repository.
+
+---
+
+<div align="center">
+  <p>Made with ❤️ for tennis enthusiasts</p>
+</div>

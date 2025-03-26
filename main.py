@@ -476,6 +476,49 @@ def is_person_on_court(person, courts):
     # If we reached here, the person is not on any court
     return -1, 'off_court'
 
+def assign_court_numbers(blue_mask_connected):
+    """
+    Assign court numbers by clustering blue regions
+    Returns a labeled mask where each court has a unique number
+    """
+    # Find all connected components in the blue mask
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(blue_mask_connected, connectivity=8)
+    
+    # The first label (0) is the background, so we start from 1
+    courts = []
+    
+    # Filter out small components (noise)
+    for i in range(1, num_labels):
+        area = stats[i, cv2.CC_STAT_AREA]
+        if area >= Config.Court.MIN_AREA:
+            x = stats[i, cv2.CC_STAT_LEFT]
+            y = stats[i, cv2.CC_STAT_TOP]
+            w = stats[i, cv2.CC_STAT_WIDTH]
+            h = stats[i, cv2.CC_STAT_HEIGHT]
+            
+            courts.append({
+                'id': i,
+                'area': area,
+                'bbox': (x, y, w, h),
+                'centroid': centroids[i]
+            })
+    
+    # Sort courts by x-coordinate to assign numbers from left to right
+    courts.sort(key=lambda c: c['centroid'][0])
+    
+    # Create a renumbered mask
+    court_mask = np.zeros_like(blue_mask_connected, dtype=np.uint8)
+    
+    # Assign new court numbers (1, 2, 3, ...) to each court based on sorted order
+    for i, court in enumerate(courts):
+        court_id = i + 1  # Start numbering from 1
+        court['court_number'] = court_id
+        # Extract original label mask and assign new number
+        court_region = (labels == court['id']).astype(np.uint8) * court_id
+        court_mask = cv2.add(court_mask, court_region)
+    
+    return court_mask, courts
+
 def main():
     """Main function"""
     # Load image
@@ -489,32 +532,224 @@ def main():
     debug_folder = Config.Paths.debug_dir()
     os.makedirs(debug_folder, exist_ok=True)
     
-    # Detect tennis courts
-    OutputManager.log("Analyzing image for tennis courts...", "INFO")
-    courts = detect_tennis_court(image, debug_folder)
+    # Create color masks for court detection
+    OutputManager.log("Creating color masks for court detection...", "INFO")
+    blue_mask = create_blue_mask(image)
+    green_mask = create_green_mask(image)
+    
+    # Do NOT apply additional morphological operations to connect blue regions
+    # Use the raw blue mask to avoid connecting unrelated areas like the sky
+    blue_mask_raw = blue_mask.copy()
+    
+    # Create court mask where green overrides blue
+    height, width = image.shape[:2]
+    court_mask = np.zeros((height, width), dtype=np.uint8)
+    court_mask[blue_mask_raw > 0] = 1  # Blue areas
+    court_mask[green_mask > 0] = 0     # Green areas override blue
+    
+    # Filter out blue regions that don't have any green nearby (like sky)
+    # Find all connected components in the blue mask
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(blue_mask_raw, connectivity=8)
+    
+    # For each blue region, check if there's green nearby
+    filtered_court_mask = np.zeros_like(court_mask)
+    for i in range(1, num_labels):
+        region = (labels == i).astype(np.uint8)
+        area = stats[i, cv2.CC_STAT_AREA]
+        
+        # Skip very small regions
+        if area < Config.Court.MIN_AREA:
+            continue
+        
+        # Dilate the region to check for nearby green
+        kernel = np.ones((15, 15), np.uint8)
+        dilated_region = cv2.dilate(region, kernel, iterations=1)
+        
+        # Check if there's green nearby this blue region
+        green_nearby = cv2.bitwise_and(green_mask, dilated_region)
+        green_nearby_pixels = cv2.countNonZero(green_nearby)
+        
+        # Only keep blue regions that have at least some green nearby
+        if green_nearby_pixels > 50:  # Minimum threshold for green pixels
+            # This is likely a court (not sky) - keep it
+            filtered_court_mask[region > 0] = court_mask[region > 0]
+    
+    # Use the filtered court mask for further processing
+    court_mask = filtered_court_mask
+    
+    # Save raw masks for debugging
+    cv2.imwrite(os.path.join(debug_folder, "blue_mask_raw.png"), blue_mask_raw)
+    cv2.imwrite(os.path.join(debug_folder, "green_mask.png"), green_mask)
+    cv2.imwrite(os.path.join(debug_folder, "filtered_court_mask.png"), court_mask * 255)
+    
+    # Create colored visualization of masks
+    court_mask_viz = np.zeros((height, width, 3), dtype=np.uint8)
+    court_mask_viz[blue_mask_raw > 0] = [255, 0, 0]  # Blue for all blue areas
+    court_mask_viz[green_mask > 0] = [0, 255, 0]     # Green areas override blue
+    
+    # Highlight filtered courts in a brighter blue
+    filtered_blue = np.zeros_like(court_mask_viz)
+    filtered_blue[court_mask > 0] = [255, 127, 0]  # Bright blue for valid courts
+    cv2.addWeighted(court_mask_viz, 1, filtered_blue, 0.7, 0, court_mask_viz)
+    
+    cv2.imwrite(os.path.join(debug_folder, "color_masks.png"), court_mask_viz)
+    
+    # Assign court numbers to each separate blue region
+    court_numbers_mask, courts = assign_court_numbers(court_mask)
+    
+    # Create a color-coded court mask for visualization
+    court_viz = np.zeros((height, width, 3), dtype=np.uint8)
+    
+    # Assign different colors to each court
+    court_colors = [
+        (255, 0, 0),    # Blue
+        (0, 0, 255),    # Red
+        (255, 0, 255),  # Purple
+        (0, 255, 255)   # Yellow
+    ]
+    
+    # Draw each court with a different color
+    for court in courts:
+        court_id = court['court_number']
+        color_idx = (court_id - 1) % len(court_colors)
+        court_color = court_colors[color_idx]
+        
+        # Extract court mask
+        court_mask_individual = (court_numbers_mask == court_id).astype(np.uint8) * 255
+        # Find contours of the court
+        court_contours, _ = cv2.findContours(court_mask_individual, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Draw the court area
+        court_area = np.zeros_like(court_viz)
+        court_area[court_mask_individual > 0] = court_color
+        cv2.addWeighted(court_viz, 1, court_area, 0.7, 0, court_viz)
+        
+        # Draw court number at center
+        cx, cy = int(court['centroid'][0]), int(court['centroid'][1])
+        cv2.putText(court_viz, f"Court {court_id}", (cx-40, cy), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+    
+    # Save court visualization
+    cv2.imwrite(os.path.join(debug_folder, "courts_numbered.png"), court_viz)
+    
+    # Create a semi-transparent overlay of the masks on the original image
+    alpha = 0.5  # Transparency factor
+    mask_overlay = image.copy()
+    # Apply the colored masks with transparency
+    cv2.addWeighted(court_mask_viz, alpha, mask_overlay, 1 - alpha, 0, mask_overlay)
     
     # Detect people
     OutputManager.log("Looking for people in the image...", "INFO")
     people = detect_people(image)
     
-    # Determine if each person is on a court
+    # Determine if each person is on a court based on masks directly
     people_locations = []
-    for person_idx, person in enumerate(people):
-        court_idx, area_type = is_person_on_court(person, courts)
+    
+    for person in people:
+        # Get foot position
+        if 'foot_position' in person:
+            foot_x, foot_y = person['foot_position']
+        else:
+            foot_x, foot_y = person['position']
+        
+        # Check if foot is on blue (in-bounds) or green (out-bounds)
+        if foot_y < height and foot_x < width:
+            # Check which court number the person is on
+            if blue_mask_raw[foot_y, foot_x] > 0 and green_mask[foot_y, foot_x] == 0 and court_mask[foot_y, foot_x] > 0:
+                # On blue area and not on green area (in-bounds)
+                # Get the court number
+                court_number = court_numbers_mask[foot_y, foot_x]
+                if court_number > 0:
+                    court_idx = court_number - 1  # Convert court number to zero-based index
+                    area_type = 'in_bounds'
+                else:
+                    court_idx = -1
+                    area_type = 'off_court'
+            elif green_mask[foot_y, foot_x] > 0:
+                # On green area (out-bounds)
+                # Check nearby blue to determine the court number
+                nearby_mask = np.zeros((height, width), dtype=np.uint8)
+                cv2.circle(nearby_mask, (foot_x, foot_y), 20, 255, -1)
+                nearby_courts = cv2.bitwise_and(court_numbers_mask, court_numbers_mask, mask=nearby_mask)
+                unique_courts = np.unique(nearby_courts)
+                if len(unique_courts) > 1:  # First value is 0 (background)
+                    court_number = unique_courts[1]
+                    court_idx = court_number - 1
+                    area_type = 'out_bounds'
+                else:
+                    court_idx = -1
+                    area_type = 'off_court'
+            else:
+                # Not on any colored area
+                court_idx = -1
+                area_type = 'off_court'
+        else:
+            court_idx = -1
+            area_type = 'off_court'
+            
         people_locations.append((court_idx, area_type))
     
     # Display summary
-    OutputManager.summarize_detections(courts, people, people_locations)
+    OutputManager.log(f"{OutputManager.BOLD}Detection Summary:{OutputManager.RESET}", "INFO")
+    OutputManager.log(f"Found {len(courts)} tennis courts", "SUCCESS")
+    OutputManager.log(f"Found {len(people)} people in the image", "SUCCESS")
     
-    # Make a copy for drawing results
+    # Count people by location
+    court_counts = {}
+    for court_idx, area_type in people_locations:
+        if court_idx >= 0:
+            court_num = court_idx + 1
+            if court_num not in court_counts:
+                court_counts[court_num] = {'in_bounds': 0, 'out_bounds': 0}
+            court_counts[court_num][area_type] += 1
+    
+    # Print court-specific counts
+    for court_num in sorted(court_counts.keys()):
+        counts = court_counts[court_num]
+        OutputManager.log(f"Court {court_num}: {counts['in_bounds']} in-bounds, {counts['out_bounds']} out-bounds", "INFO")
+    
+    # Calculate overall counts
+    in_bounds_count = sum(1 for _, area_type in people_locations if area_type == 'in_bounds')
+    out_bounds_count = sum(1 for _, area_type in people_locations if area_type == 'out_bounds')
+    off_court_count = sum(1 for _, area_type in people_locations if area_type == 'off_court')
+    
+    OutputManager.log(f"Total: {in_bounds_count} in-bounds, {out_bounds_count} out-bounds, {off_court_count} off court", "INFO")
+    
+    # Create debug visualization showing foot positions on mask
+    debug_foot_positions = court_viz.copy()
+    for person_idx, person in enumerate(people):
+        if 'foot_position' in person:
+            foot_x, foot_y = person['foot_position']
+            # Draw foot position marker (circle)
+            cv2.circle(debug_foot_positions, (foot_x, foot_y), 10, (255, 255, 255), -1)
+            cv2.circle(debug_foot_positions, (foot_x, foot_y), 10, (0, 0, 0), 2)
+            # Label with person index
+            cv2.putText(debug_foot_positions, f"P{person_idx+1}", (foot_x+15, foot_y), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+    
+    cv2.imwrite(os.path.join(debug_folder, "foot_positions_debug.png"), debug_foot_positions)
+    
+    # Draw people and their locations on the mask overlay
     output_image = image.copy()
     
-    # Draw court outlines
-    if Config.Visual.DRAW_COURT_OUTLINE:
-        for court_idx, court in enumerate(courts):
-            cv2.drawContours(output_image, [court['approx']], 0, 
-                            Config.Visual.COURT_OUTLINE_COLOR, 
-                            Config.Visual.COURT_OUTLINE_THICKNESS)
+    # Draw court outlines with different colors
+    for court in courts:
+        court_id = court['court_number']
+        color_idx = (court_id - 1) % len(court_colors)
+        court_color = court_colors[color_idx]
+        
+        # Extract court mask
+        court_mask_individual = (court_numbers_mask == court_id).astype(np.uint8) * 255
+        # Find contours of the court
+        court_contours, _ = cv2.findContours(court_mask_individual, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Draw the court outline
+        cv2.drawContours(output_image, court_contours, -1, court_color, 2)
+        
+        # Draw court number at center
+        cx, cy = int(court['centroid'][0]), int(court['centroid'][1])
+        cv2.putText(output_image, f"Court {court_id}", (cx-40, cy), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
     
     # Draw people and their locations
     for person_idx, person in enumerate(people):
@@ -525,18 +760,23 @@ def main():
         
         # Choose color based on location
         if court_idx >= 0:
+            court_number = court_idx + 1
             if area_type == 'in_bounds':
                 color = Config.Visual.PERSON_IN_BOUNDS_COLOR
-                label = f"Court {court_idx+1} IN"
+                label = f"Court {court_number} IN"
             else:  # out_bounds
                 color = Config.Visual.PERSON_OUT_BOUNDS_COLOR
-                label = f"Court {court_idx+1} OUT"
+                label = f"Court {court_number} OUT"
         else:
             color = Config.Visual.PERSON_OFF_COURT_COLOR
             label = "OFF COURT"
         
         # Draw bounding box
         cv2.rectangle(output_image, (x1, y1), (x2, y2), color, 2)
+        
+        # Draw foot position marker
+        foot_x, foot_y = person['foot_position']
+        cv2.circle(output_image, (foot_x, foot_y), 5, color, -1)
         
         # Draw label with black background for readability
         text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 
@@ -549,13 +789,23 @@ def main():
                    Config.Visual.FONT_SCALE, 
                    Config.Visual.TEXT_COLOR, 
                    Config.Visual.TEXT_THICKNESS)
+        
+        # Add person index number
+        cv2.putText(output_image, f"P{person_idx+1}", (x1, y2 + 20), 
+                    cv2.FONT_HERSHEY_SIMPLEX, Config.Visual.FONT_SCALE, 
+                    color, Config.Visual.TEXT_THICKNESS)
     
-    # Save output image
+    # Save the final output image
     output_path = Config.Paths.output_path()
     cv2.imwrite(output_path, output_image)
-    OutputManager.log(f"Output image saved to {output_path}", "SUCCESS")
+    OutputManager.log(f"Output image with detection results saved to {output_path}", "SUCCESS")
     
     return 0
+
+# Add a backward compatibility wrapper for the old log function
+def log(message, level="INFO"):
+    """Wrapper for backward compatibility with the old log function"""
+    OutputManager.log(message, level)
 
 if __name__ == "__main__":
     sys.exit(main())
