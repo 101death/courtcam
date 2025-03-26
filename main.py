@@ -181,7 +181,7 @@ class OutputManager:
     
     @staticmethod
     def summarize_detections(courts, people, people_locations):
-        """Summarize detection results in a nice format"""
+        """Summarize detection results in a more concise format"""
         if Config.Output.SUPER_QUIET:
             return
             
@@ -189,14 +189,29 @@ class OutputManager:
         OutputManager.log(f"Found {len(courts)} tennis courts", "SUCCESS")
         OutputManager.log(f"Found {len(people)} people in the image", "SUCCESS")
         
-        # Count people by location
+        # Count people by court
+        court_counts = {}
+        for court_idx, area_type in people_locations:
+            if court_idx >= 0:
+                court_num = court_idx + 1
+                if court_num not in court_counts:
+                    court_counts[court_num] = 0
+                court_counts[court_num] += 1
+        
+        # Print simplified court-specific counts
+        for court_num in sorted(court_counts.keys()):
+            OutputManager.log(f"Court {court_num}: {court_counts[court_num]} people", "INFO")
+        
+        # Calculate overall counts for the one-line summary
         in_bounds_count = sum(1 for _, area_type in people_locations if area_type == 'in_bounds')
         out_bounds_count = sum(1 for _, area_type in people_locations if area_type == 'out_bounds')
         off_court_count = sum(1 for _, area_type in people_locations if area_type == 'off_court')
         
-        OutputManager.log(f"  - {in_bounds_count} people in-bounds", "INFO")
-        OutputManager.log(f"  - {out_bounds_count} people out-of-bounds", "INFO")
-        OutputManager.log(f"  - {off_court_count} people off court", "INFO")
+        # Create the parts for the one-line summary
+        court_summary_parts = [f"{count} in court {court_num}" for court_num, count in court_counts.items()]
+        court_summary = ", ".join(court_summary_parts)
+        
+        # Final one-line summary will be output later after the image is saved
 
 @contextlib.contextmanager
 def suppress_stdout_stderr():
@@ -799,6 +814,19 @@ def main():
     output_path = Config.Paths.output_path()
     cv2.imwrite(output_path, output_image)
     OutputManager.log(f"Output image with detection results saved to {output_path}", "SUCCESS")
+    
+    # Print final one-line summary of all results
+    court_summary_parts = []
+    for court_num in sorted(court_counts.keys()):
+        court_summary_parts.append(f"{court_counts[court_num]} in court {court_num}")
+    
+    if court_summary_parts:
+        court_summary = ", ".join(court_summary_parts)
+        final_summary = f"Found {len(people)} people, {court_summary}, image saved to {output_path}"
+    else:
+        final_summary = f"Found {len(people)} people, none on courts, image saved to {output_path}"
+    
+    OutputManager.log(f"{OutputManager.BOLD}{final_summary}{OutputManager.RESET}", "SUCCESS")
     
     return 0
 

@@ -1,4 +1,4 @@
-# Tennis Court Detection System 🎾
+# Tennis Court Detection System
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![Python: 3.6+](https://img.shields.io/badge/Python-3.6+-blue.svg)
@@ -6,15 +6,15 @@
 ![YOLOv5](https://img.shields.io/badge/Model-YOLOv5-lightgrey.svg)
 
 <div align="center">
-  <img src="https://i.imgur.com/example.png" alt="Tennis Court Detection Example" width="600">
-  <p><i>Example of tennis court detection with people tracking</i></p>
+  <img src="images/output.png" alt="Tennis Court Detection Example" width="600">
+  <p><i>Example tennis court and people detection</i></p>
 </div>
 
-## 📋 Overview
+## Overview
 
 This system uses computer vision and machine learning to detect tennis courts and track people on them, providing real-time analysis of who is in-bounds or out-of-bounds on each court. Perfect for tennis facilities, coaches, and event organizers who need automated court monitoring.
 
-### ✨ Key Features
+### Key Features
 
 - **Court Detection**: Automatically identifies tennis courts using color analysis
 - **People Tracking**: Detects and tracks people using YOLOv5 object detection
@@ -23,7 +23,7 @@ This system uses computer vision and machine learning to detect tennis courts an
 - **Rich Visualization**: Outputs images with color-coded courts and player positions
 - **Configuration**: Highly customizable with easy-to-modify settings
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -58,7 +58,7 @@ This system uses computer vision and machine learning to detect tennis courts an
    ```
 3. Find the output in `images/output.png`
 
-## 📊 Example Commands
+## Example Commands
 
 ### Process a single image with default settings
 ```bash
@@ -85,7 +85,7 @@ python main.py --input images/matches/ --output results/ --batch
 python main.py --summary --no-save
 ```
 
-## ⚙️ Configuration
+## Configuration
 
 The system is highly configurable through the `Config` class in `main.py`. Key configuration sections include:
 
@@ -130,7 +130,7 @@ class Output:
     SUPER_QUIET = False          # Super quiet mode (almost no output)
 ```
 
-## 🔧 How It Works
+## How It Works
 
 1. **Color Masking**: The system creates masks for blue areas (in-bounds) and green areas (out-of-bounds) using HSV color thresholds.
 
@@ -157,7 +157,7 @@ class Output:
    - Reports counts of people by court and status
    - Provides overall statistics
 
-## 📊 Output Examples
+## Output Examples
 
 ### Terminal Output
 
@@ -169,10 +169,10 @@ class Output:
 [12:45:35] ℹ️ Detection Summary:
 [12:45:35] ✅ Found 2 tennis courts
 [12:45:35] ✅ Found 8 people in the image
-[12:45:35] ℹ️ Court 1: 2 in-bounds, 1 out-bounds
-[12:45:35] ℹ️ Court 2: 3 in-bounds, 0 out-bounds
-[12:45:35] ℹ️ Total: 5 in-bounds, 1 out-bounds, 2 off court
+[12:45:35] ℹ️ Court 1: 3 people
+[12:45:35] ℹ️ Court 2: 3 people
 [12:45:36] ✅ Output image with detection results saved to images/output.png
+[12:45:36] ✅ Found 8 people, 3 in court 1, 3 in court 2, image saved to images/output.png
 ```
 
 ### Visual Output
@@ -187,7 +187,7 @@ The system generates several output files:
   - `courts_numbered.png` - Each court with a unique color and number
   - `foot_positions_debug.png` - People's positions on the courts
 
-## 📋 Command Line Arguments
+## Command Line Arguments
 
 | Argument | Description | Default |
 |----------|-------------|---------|
@@ -200,7 +200,7 @@ The system generates several output files:
 | `--summary` | Show only detection summary | `False` |
 | `--no-save` | Don't save output images | `False` |
 
-## 🔎 Troubleshooting
+## Troubleshooting
 
 ### Court Detection Issues
 
@@ -214,7 +214,7 @@ The system generates several output files:
 - **False positives**: Increase the confidence threshold with `--confidence 0.5`
 - **Wrong position classification**: Check the debug images to verify color masks
 
-## 📚 Advanced Usage
+## Advanced Usage
 
 ### Processing Multiple Courts
 
@@ -234,16 +234,16 @@ For courts with different colors:
 }
 ```
 
-## 📝 License
+## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-## 📧 Contact
+## Contact
 
 For questions or support, please open an issue on the GitHub repository.
 
 ---
 
 <div align="center">
-  <p>Made with ❤️ for tennis enthusiasts</p>
+  <p>Made with love for tennis enthusiasts</p>
 </div>
