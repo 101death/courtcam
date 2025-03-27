@@ -60,7 +60,7 @@ class Config:
     # Visualization settings
     class Visual:
         COURT_OUTLINE_COLOR = (0, 255, 0)        # Green
-        COURT_OUTLINE_THICKNESS = 3              # Line thickness
+        COURT_OUTLINE_THICKNESS = 4              # Line thickness
         PERSON_IN_BOUNDS_COLOR = (0, 255, 0)     # Green for people in court
         PERSON_OUT_BOUNDS_COLOR = (0, 165, 255)  # Orange for people near court
         PERSON_OFF_COURT_COLOR = (0, 0, 255)     # Red for people off court
@@ -123,26 +123,27 @@ class Config:
 class OutputManager:
     """
     Centralized output manager for all terminal output.
-    Provides pretty formatting and suppresses unwanted messages.
+    Provides professional formatting, reliable animations, and clean output management.
     """
-    # ANSI color codes
+    # ANSI color and style codes
     BLUE = "\033[94m"
     GREEN = "\033[92m"
     YELLOW = "\033[93m"
     RED = "\033[91m"
     GRAY = "\033[90m"
+    CYAN = "\033[96m"
     BOLD = "\033[1m"
     UNDERLINE = "\033[4m"
     RESET = "\033[0m"
     
-    # Symbol map for message types - using simpler Unicode symbols
+    # Symbols for different message types
     SYMBOLS = {
-        "INFO": "→",
+        "INFO": "ℹ",
         "SUCCESS": "✓",
-        "WARNING": "!",
+        "WARNING": "⚠",
         "ERROR": "✗",
         "DEBUG": "•",
-        "FATAL": "✗✗",
+        "FATAL": "☠",
     }
     
     # Track messages for summary
@@ -150,6 +151,13 @@ class OutputManager:
     errors = []
     successes = []
     info = []
+    
+    # Animation state
+    _animation_active = False
+    _animation_thread = None
+    _stop_animation = False
+    _progress_total = 0
+    _progress_current = 0
     
     @classmethod
     def reset_logs(cls):
@@ -160,8 +168,21 @@ class OutputManager:
         cls.info = []
     
     @classmethod
+    def _ensure_animation_stopped(cls):
+        """Ensure any running animation is stopped and cleaned up"""
+        if cls._animation_active:
+            cls._stop_animation = True
+            cls._animation_active = False
+            if cls._animation_thread and cls._animation_thread.is_alive():
+                cls._animation_thread.join(timeout=0.1)
+            
+            # Clear the current line
+            sys.stdout.write("\r\033[K")
+            sys.stdout.flush()
+    
+    @classmethod
     def log(cls, message, level="INFO"):
-        """Print formatted log messages with consistent, clean formatting and track for summary"""
+        """Print formatted log messages with consistent, clean formatting"""
         # In super quiet mode, only show errors and success messages
         if Config.Output.SUPER_QUIET and level not in ["ERROR", "SUCCESS", "FATAL"]:
             return
@@ -169,20 +190,30 @@ class OutputManager:
         if not Config.Output.VERBOSE and level == "DEBUG":
             return
         
+        # Stop any running animation
+        cls._ensure_animation_stopped()
+        
+        # Track messages for summary
+        if level == "INFO":
+            cls.info.append(message)
+        elif level == "SUCCESS":
+            cls.successes.append(message)
+        elif level == "WARNING":
+            cls.warnings.append(message)
+        elif level == "ERROR" or level == "FATAL":
+            cls.errors.append(message)
+        
         # Get color based on level
         color = ""
         if Config.Output.USE_COLOR_OUTPUT:
             if level == "INFO":
-                cls.info.append(message)
+                color = cls.BLUE
             elif level == "SUCCESS":
                 color = cls.GREEN
-                cls.successes.append(message)
             elif level == "WARNING":
                 color = cls.YELLOW
-                cls.warnings.append(message)
             elif level == "ERROR" or level == "FATAL":
                 color = cls.RED
-                cls.errors.append(message)
             elif level == "DEBUG":
                 color = cls.GRAY
         
@@ -191,13 +222,87 @@ class OutputManager:
         if Config.Output.SHOW_TIMESTAMP:
             timestamp = f"{cls.GRAY}[{datetime.now().strftime('%H:%M:%S')}]{cls.RESET} "
         
-        # Create symbol prefix
+        # Get symbol based on message level
         symbol = cls.SYMBOLS.get(level, "")
         
         # Format the message with appropriate styling
         formatted_message = f"{timestamp}{color}{symbol} {message}{cls.RESET}"
         
+        # Print the message
         print(formatted_message)
+    
+    @classmethod
+    def _run_animation_thread(cls, animate_func):
+        """Run an animation thread with the given animation function"""
+        # Ensure any previous animation is stopped
+        cls._ensure_animation_stopped()
+        
+        # Set up new animation
+        cls._stop_animation = False
+        cls._animation_active = True
+        
+        # Start the animation thread
+        cls._animation_thread = threading.Thread(target=animate_func)
+        cls._animation_thread.daemon = True
+        cls._animation_thread.start()
+    
+    @classmethod
+    def animate(cls, message, is_progress=False, total=20):
+        """
+        Display a simple spinning animation next to text
+        
+        Args:
+            message: Message to display with the animation
+            is_progress: Ignored (maintained for compatibility)
+            total: Ignored (maintained for compatibility)
+        """
+        # Bold, highly visible spinning animation
+        frames = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]  # Braille spin animation
+        
+        def animate():
+            idx = 0
+            
+            # Continue spinning until stopped
+            while not cls._stop_animation and cls._animation_active:
+                # Get the current frame
+                frame = frames[idx % len(frames)]
+                
+                # Format timestamp with consistent width
+                timestamp = ""
+                if Config.Output.SHOW_TIMESTAMP:
+                    timestamp = f"{cls.GRAY}[{datetime.now().strftime('%H:%M:%S')}]{cls.RESET} "
+                
+                # Clear the line and print the new status with spinner
+                sys.stdout.write(f"\r\033[K{timestamp}{message} {cls.BLUE}{cls.BOLD}{frame}{cls.RESET}")
+                sys.stdout.flush()
+                
+                # Update the index for next frame and sleep briefly
+                idx = (idx + 1) % len(frames)
+                time.sleep(0.08)  # Even faster animation for more noticeable spinning
+        
+        # Run the animation in a separate thread
+        cls._run_animation_thread(animate)
+    
+    @classmethod
+    def set_progress(cls, value):
+        """Set the current progress value (0.0 to 1.0)"""
+        cls._progress_current = min(cls._progress_total, max(0, value * cls._progress_total))
+    
+    @classmethod
+    def stop_animation(cls, success=True):
+        """Stop the current animation with optional completion indicator"""
+        if cls._animation_active:
+            # First stop the animation thread
+            cls._stop_animation = True
+            cls._animation_active = False
+            if cls._animation_thread and cls._animation_thread.is_alive():
+                cls._animation_thread.join(timeout=0.1)
+            
+            # Clear the line
+            sys.stdout.write("\r\033[K")
+            sys.stdout.flush()
+            
+            # No completion message - the calling code will do this
     
     @classmethod
     def summarize_detections(cls, courts, people, people_locations):
@@ -225,8 +330,125 @@ class OutputManager:
         return court_counts
     
     @classmethod
+    def fancy_summary(cls, title, content, processing_time=None):
+        """
+        Display a fancy boxed summary with animations
+        
+        Args:
+            title: Title of the summary box
+            content: List of content lines or a string with newlines
+            processing_time: Optional processing time to display
+        """
+        # Stop any running animation
+        cls._ensure_animation_stopped()
+        
+        # Helper function to wrap text by words
+        def wrap_text(text, width):
+            words = text.split()
+            lines = []
+            current_line = []
+            current_length = 0
+            
+            for word in words:
+                if current_length + len(word) + (1 if current_length > 0 else 0) <= width:
+                    # Add word to current line
+                    if current_length > 0:
+                        current_length += 1  # For the space
+                        current_line.append(" ")
+                    current_line.append(word)
+                    current_length += len(word)
+                else:
+                    # Line is full, start a new one
+                    if current_line:
+                        lines.append("".join(current_line))
+                    current_line = [word]
+                    current_length = len(word)
+            
+            # Add the last line if it exists
+            if current_line:
+                lines.append("".join(current_line))
+            
+            return lines
+        
+        # Process the content
+        max_width = 70  # Maximum characters per line
+        content_lines = []
+        
+        if isinstance(content, str):
+            # Split the content by newlines first
+            for paragraph in content.split('\n'):
+                if not paragraph:
+                    # Keep empty lines
+                    content_lines.append("")
+                else:
+                    # Wrap the paragraph
+                    wrapped_lines = wrap_text(paragraph, max_width)
+                    content_lines.extend(wrapped_lines)
+        else:
+            # Handle list input
+            for paragraph in content:
+                if not paragraph:
+                    content_lines.append("")
+                else:
+                    wrapped_lines = wrap_text(paragraph, max_width)
+                    content_lines.extend(wrapped_lines)
+        
+        # Add processing time if provided
+        if processing_time is not None:
+            content_lines.append("")
+            content_lines.append(f"Processing time: {processing_time:.2f} seconds")
+        
+        # Calculate box width based on content
+        content_width = max(len(line) for line in content_lines) if content_lines else 0
+        box_width = max(content_width + 4, len(title) + 10, 50)
+        
+        # Box drawing characters
+        top_left = "╭"
+        top_right = "╮"
+        bottom_left = "╰"
+        bottom_right = "╯"
+        horizontal = "─"
+        vertical = "│"
+        
+        # Build the box parts
+        top_border = f"{top_left}{horizontal * (box_width - 2)}{top_right}"
+        title_line = f"{vertical} {cls.BOLD}{title.center(box_width - 4)}{cls.RESET} {vertical}"
+        divider = f"├{horizontal * (box_width - 2)}┤"
+        empty_line = f"{vertical}{' ' * (box_width - 2)}{vertical}"
+        bottom_border = f"{bottom_left}{horizontal * (box_width - 2)}{bottom_right}"
+        
+        # Display the summary box with animation
+        def display_box():
+            # Print top border
+            print(top_border)
+            
+            # Print title
+            print(title_line)
+            
+            # Print divider
+            print(divider)
+            
+            # Print empty line
+            print(empty_line)
+            
+            # Print content
+            for line in content_lines:
+                # Pad the line to fit the box
+                padded_line = line.ljust(box_width - 4)[:box_width - 4]
+                print(f"{vertical} {padded_line} {vertical}")
+            
+            # Print empty line
+            print(empty_line)
+            
+            # Print bottom border
+            print(bottom_border)
+        
+        # Display the box
+        display_box()
+    
+    @classmethod
     def create_final_summary(cls, people_count, court_counts, output_path=None, processing_time=None, total_courts=None):
-        """Create a final summary line with errors/warnings if any"""
+        """Create a final summary for display"""
         # Base summary parts
         summary_parts = []
         
@@ -268,22 +490,23 @@ class OutputManager:
         if output_path:
             final_summary += f"\n\nOutput image saved"
         
-        # Add processing time
-        if processing_time:
-            final_summary += f"\n\nProcessing time: {processing_time:.2f} seconds"
-        
         # Add errors/warnings differently - in a more natural way
         if cls.errors or cls.warnings:
             final_summary += "\n\n"
             
             if cls.errors:
-                final_summary += cls.get_potential_fixes()
+                error_fixes = cls.get_potential_fixes()
+                if "\n" in error_fixes:
+                    final_summary += f"{cls.RED}{cls.BOLD}ERRORS DETECTED:{cls.RESET}\n{error_fixes}"
+                else:
+                    final_summary += f"{cls.RED}{cls.BOLD}ERROR:{cls.RESET} {error_fixes}"
             elif cls.warnings and not cls.errors:
                 if len(cls.warnings) == 1:
-                    final_summary += f"Just a heads up: {cls.warnings[0]}"
+                    final_summary += f"{cls.YELLOW}{cls.BOLD}NOTE:{cls.RESET} {cls.warnings[0]}"
                 else:
+                    warning_header = f"{cls.YELLOW}{cls.BOLD}NOTES:{cls.RESET}"
                     warning_texts = [f"• {w}" for w in cls.warnings]
-                    final_summary += f"A few things to note:\n" + "\n".join(warning_texts)
+                    final_summary += f"{warning_header}\n" + "\n".join(warning_texts)
         
         return final_summary
     
@@ -436,6 +659,7 @@ def detect_tennis_court(image, debug_folder=None):
         cv2.imwrite(os.path.join(debug_folder, "green_mask_raw.png"), green_mask)
     
     # Find blue contours (potential courts)
+    OutputManager.log("Analyzing potential court shapes...", "DEBUG")
     blue_contours, _ = cv2.findContours(blue_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     # Process each blue contour as a potential court
@@ -527,80 +751,12 @@ def detect_tennis_court(image, debug_folder=None):
             
             cv2.imwrite(os.path.join(debug_folder, "courts_detected.png"), courts_viz)
     
-    OutputManager.log(f"Found {len(valid_courts)} tennis courts", "SUCCESS")
+    if valid_courts:
+        OutputManager.log(f"Found {len(valid_courts)} tennis courts", "SUCCESS")
+    else:
+        OutputManager.log("No tennis courts detected", "WARNING")
+    
     return valid_courts
-
-def detect_people(image):
-    """
-    Detect people in an image using YOLOv5
-    Returns a list of dictionaries with person positions and bounding boxes
-    """
-    # Set the yolov5 model path
-    yolov5_path = os.path.join(Config.Paths.MODELS_DIR, f'{Config.Model.NAME}.pt')
-    
-    # Create loading animation with simpler characters for better compatibility
-    animation = ["-", "\\", "|", "/"]
-    idx = 0
-    animation_start_time = time.time()
-    stop_animation = False
-    
-    def update_loading():
-        nonlocal idx, animation_start_time
-        while not stop_animation:
-            if time.time() - animation_start_time > 0.2:  # Update every 200ms for smoother animation
-                idx = (idx + 1) % len(animation)
-                animation_start_time = time.time()
-                # Clear the line and print new animation
-                print(f"\rLooking for people {animation[idx]}", end="", flush=True)
-            time.sleep(0.05)  # Increased sleep time to reduce CPU usage
-    
-    # Start animation thread
-    animation_thread = threading.Thread(target=update_loading)
-    animation_thread.daemon = True  # Thread will exit when main program exits
-    animation_thread.start()
-    
-    try:
-        # Load the model with suppressed output
-        with suppress_stdout_stderr():
-            model = torch.hub.load('ultralytics/yolov5', 'custom', path=yolov5_path, verbose=False)
-            model.conf = Config.Model.CONFIDENCE
-            model.iou = Config.Model.IOU
-            model.classes = Config.Model.CLASSES
-            results = model(image)
-    finally:
-        # Stop animation and clear the line
-        stop_animation = True
-        animation_thread.join(timeout=0.2)  # Increased timeout for smoother cleanup
-        print("\r" + " " * 50 + "\r", end="", flush=True)
-    
-    # Extract people detections
-    people = []
-    
-    # Get pandas dataframe from results
-    df = results.pandas().xyxy[0]
-    
-    # Filter for person class (0)
-    df = df[df['class'] == 0]
-    
-    # Process each detection
-    for _, row in df.iterrows():
-        x1, y1, x2, y2 = int(row['xmin']), int(row['ymin']), int(row['xmax']), int(row['ymax'])
-        
-        # Calculate center point and foot position
-        center_x = (x1 + x2) // 2
-        center_y = (y1 + y2) // 2
-        foot_x = center_x
-        foot_y = y2  # Bottom of bounding box represents feet
-        
-        # Add to people list
-        people.append({
-            'position': (center_x, center_y),
-            'foot_position': (foot_x, foot_y),
-            'bbox': (x1, y1, x2, y2),
-            'confidence': row['confidence']
-        })
-    
-    return people
 
 def is_person_on_court(person, courts):
     """
@@ -741,8 +897,15 @@ def main():
     # Load image
     input_path = Config.Paths.input_path()
     try:
+        # Start animation for loading the image
+        OutputManager.animate("Loading image")
         image = cv2.imread(input_path)
-        if image is None:
+        
+        # Stop animation and show result
+        OutputManager.stop_animation()
+        if image is not None:
+            OutputManager.log("Image loaded successfully", "SUCCESS")
+        else:
             OutputManager.log(f"Unable to open the image at {input_path}", "ERROR")
             # Show final summary with error and exit
             processing_time = time.time() - start_time
@@ -756,6 +919,7 @@ def main():
             print_error_summary(final_summary)
             return 1
     except Exception as e:
+        OutputManager.stop_animation()
         OutputManager.log(f"Problem loading the image: {str(e)}", "ERROR")
         processing_time = time.time() - start_time
         final_summary = OutputManager.create_final_summary(
@@ -777,13 +941,14 @@ def main():
             OutputManager.log(f"Can't create debug folder: {str(e)}", "WARNING")
             # Continue execution even if debug folder can't be created
         
-        # Create color masks for court detection
-        OutputManager.log("Analyzing court colors in the image...", "INFO")
+        # Detect tennis courts
+        OutputManager.animate("Analyzing court colors")
         blue_mask = create_blue_mask(image)
         green_mask = create_green_mask(image)
+        OutputManager.stop_animation()
+        OutputManager.log("Court colors analyzed", "SUCCESS")
         
-        # Do NOT apply additional morphological operations to connect blue regions
-        # Use the raw blue mask to avoid connecting unrelated areas like the sky
+        # Process the raw blue mask to avoid connecting unrelated areas like the sky
         blue_mask_raw = blue_mask.copy()
         
         # Create court mask where green overrides blue
@@ -793,7 +958,7 @@ def main():
         court_mask[green_mask > 0] = 0     # Green areas override blue
         
         # Filter out blue regions that don't have any green nearby (like sky)
-        # Find all connected components in the blue mask
+        OutputManager.animate("Processing court regions")
         num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(blue_mask_raw, connectivity=8)
         
         # For each blue region, check if there's green nearby
@@ -819,6 +984,9 @@ def main():
                 # This is likely a court (not sky) - keep it
                 filtered_court_mask[region > 0] = court_mask[region > 0]
         
+        OutputManager.stop_animation()
+        OutputManager.log("Court regions processed", "SUCCESS")
+        
         # Use the filtered court mask for further processing
         court_mask = filtered_court_mask
         
@@ -840,16 +1008,14 @@ def main():
         filtered_blue[court_mask > 0] = [255, 127, 0]  # Bright blue for valid courts
         cv2.addWeighted(court_mask_viz, 1, filtered_blue, 0.7, 0, court_mask_viz)
         
-        try:
-            cv2.imwrite(os.path.join(debug_folder, "color_masks.png"), court_mask_viz)
-        except Exception as e:
-            OutputManager.log(f"Couldn't save color visualization: {str(e)}", "WARNING")
-        
         # Assign court numbers to each separate blue region
+        OutputManager.animate("Identifying courts")
         court_numbers_mask, courts = assign_court_numbers(court_mask)
+        OutputManager.stop_animation()
         
+        # Output appropriate message based on court detection
         if len(courts) == 0:
-            OutputManager.log("Couldn't find any tennis courts in this image", "WARNING")
+            OutputManager.log("No tennis courts found in the image", "WARNING")
         else:
             OutputManager.log(f"Found {len(courts)} tennis court{'s' if len(courts) > 1 else ''}", "SUCCESS")
         
@@ -899,10 +1065,47 @@ def main():
         cv2.addWeighted(court_mask_viz, alpha, mask_overlay, 1 - alpha, 0, mask_overlay)
         
         # Detect people
-        OutputManager.log("Looking for people in the image...", "INFO")
+        OutputManager.animate("Looking for people")
         try:
-            people = detect_people(image)
+            # Load the YOLO model
+            with suppress_stdout_stderr():
+                yolov5_path = os.path.join(Config.Paths.MODELS_DIR, f'{Config.Model.NAME}.pt')
+                model = torch.hub.load('ultralytics/yolov5', 'custom', path=yolov5_path, verbose=False)
+                model.conf = Config.Model.CONFIDENCE
+                model.iou = Config.Model.IOU
+                model.classes = Config.Model.CLASSES
+            
+            # Run detection
+            with suppress_stdout_stderr():
+                results = model(image)
+            
+            # Process results
+            people = []
+            df = results.pandas().xyxy[0]
+            df = df[df['class'] == 0]
+            
+            for _, row in df.iterrows():
+                x1, y1, x2, y2 = int(row['xmin']), int(row['ymin']), int(row['xmax']), int(row['ymax'])
+                
+                # Calculate center point and foot position
+                center_x = (x1 + x2) // 2
+                center_y = (y1 + y2) // 2
+                foot_x = center_x
+                foot_y = y2  # Bottom of bounding box represents feet
+                
+                # Add to people list
+                people.append({
+                    'position': (center_x, center_y),
+                    'foot_position': (foot_x, foot_y),
+                    'bbox': (x1, y1, x2, y2),
+                    'confidence': row['confidence']
+                })
+            
+            OutputManager.stop_animation()
+            # Report how many people we found
+            OutputManager.log(f"Found {len(people)} {'person' if len(people) == 1 else 'people'} in the image", "SUCCESS")
         except Exception as e:
+            OutputManager.stop_animation()
             error_msg = str(e)
             if "model" in error_msg.lower() or "yolo" in error_msg.lower() or "no such file" in error_msg.lower():
                 OutputManager.log(f"YOLOv5 model not found: {error_msg}", "ERROR")
@@ -917,19 +1120,19 @@ def main():
             # Continue with empty people list
             people = []
         
-        if len(people) == 0:
-            OutputManager.log("No people appear to be in this image", "WARNING")
-        else:
-            OutputManager.log(f"Found {len(people)} {'person' if len(people) == 1 else 'people'} in the image", "SUCCESS")
-        
-        # Determine if each person is on a court based on masks directly
+        # Determine if each person is on a court
+        OutputManager.animate("Analyzing positions")
         people_locations = []
         
+        # Process each person
         for person in people:
             court_idx, area_type = is_person_on_court(person, courts)
             people_locations.append((court_idx, area_type))
         
-        # Display summary and get court counts - simplify to avoid repetition
+        OutputManager.stop_animation()
+        OutputManager.log("Positions analyzed successfully", "SUCCESS")
+        
+        # Display summary and get court counts
         court_counts = {}
         for court_idx, area_type in people_locations:
             if court_idx >= 0:
@@ -938,7 +1141,7 @@ def main():
                     court_counts[court_num] = 0
                 court_counts[court_num] += 1
         
-        # Log court counts without repeating the detection summary
+        # Log court counts
         for court_num in sorted(court_counts.keys()):
             OutputManager.log(f"Court {court_num}: {court_counts[court_num]} people", "INFO")
         
@@ -959,7 +1162,8 @@ def main():
         except Exception as e:
             OutputManager.log(f"Couldn't save foot positions debug image: {str(e)}", "WARNING")
         
-        # Draw people and their locations
+        # Create final output image
+        OutputManager.animate("Creating output image")
         output_image = image.copy()
         
         # Draw court outlines with different colors
@@ -983,8 +1187,8 @@ def main():
                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
         
         # Draw people and their locations
-        for person_idx, person in enumerate(people):
-            court_idx, area_type = people_locations[person_idx]
+        for i, person in enumerate(people):
+            court_idx, area_type = people_locations[i]
             
             # Draw bounding box and label
             x1, y1, x2, y2 = person['bbox']
@@ -1024,23 +1228,29 @@ def main():
                            Config.Visual.TEXT_THICKNESS)
                 
                 # Add person index number
-                cv2.putText(output_image, f"Person {person_idx+1}", (x1, y2 + 20), 
+                cv2.putText(output_image, f"Person {i+1}", (x1, y2 + 20), 
                             cv2.FONT_HERSHEY_SIMPLEX, Config.Visual.FONT_SCALE, 
                             color, Config.Visual.TEXT_THICKNESS)
             else:
                 # Just add a small number indicator for simpler display
-                cv2.putText(output_image, f"{person_idx+1}", (x1, y1 - 5), 
+                cv2.putText(output_image, f"{i+1}", (x1, y1 - 5), 
                            cv2.FONT_HERSHEY_SIMPLEX, 
                            Config.Visual.FONT_SCALE, 
                            Config.Visual.TEXT_COLOR, 
                            Config.Visual.TEXT_THICKNESS)
         
+        OutputManager.stop_animation()
+        OutputManager.log("Output image generated", "SUCCESS")
+        
         # Save the final output image
         output_path = Config.Paths.output_path()
         try:
+            OutputManager.animate("Saving image")
             cv2.imwrite(output_path, output_image)
-            OutputManager.log(f"Output image saved", "SUCCESS")
+            OutputManager.stop_animation()
+            OutputManager.log("Output image saved successfully", "SUCCESS")
         except Exception as e:
+            OutputManager.stop_animation()
             OutputManager.log(f"Error saving output image: {str(e)}", "ERROR")
             output_path = None
         
@@ -1050,33 +1260,16 @@ def main():
             people_count=len(people),
             court_counts=court_counts,
             output_path=output_path,
-            processing_time=processing_time,
+            processing_time=None,  # Will be added by fancy_summary
             total_courts=len(courts)  # Pass the total number of courts
         )
         
-        # Print the final summary with decorative borders
-        border_width = 80
-        top_border = "╭" + "─" * (border_width - 2) + "╮"
-        middle_border = "├" + "─" * (border_width - 2) + "┤"
-        bottom_border = "╰" + "─" * (border_width - 2) + "╯"
-        
-        print("\n" + top_border)
-        print("│ " + "RESULTS SUMMARY".center(border_width - 4) + " │")
-        print(middle_border)
-        print("│ " + " " * (border_width - 4) + " │")
-        
-        # Split the summary by lines and format each line
-        summary_lines = final_summary.split('\n')
-        for line in summary_lines:
-            # Handle empty lines
-            if not line.strip():
-                print("│ " + " " * (border_width - 4) + " │")
-            else:
-                # Format line to fit within border
-                print("│ " + line.ljust(border_width - 4)[:border_width - 4] + " │")
-        
-        print("│ " + " " * (border_width - 4) + " │")
-        print(bottom_border)
+        # Use the fancy summary method
+        OutputManager.fancy_summary(
+            "RESULTS SUMMARY", 
+            final_summary, 
+            processing_time=processing_time
+        )
         
         # If there were errors that didn't cause a fatal exit, still indicate an error status
         if OutputManager.errors:
@@ -1084,6 +1277,7 @@ def main():
         
         return 0
     except Exception as e:
+        OutputManager.stop_animation()
         OutputManager.log(f"Error in main function: {str(e)}", "ERROR")
         return 1
 
@@ -1093,29 +1287,13 @@ def log(message, level="INFO"):
     OutputManager.log(message, level)
 
 def print_error_summary(summary):
-    """Print error summary in a formatted box with solutions"""
-    border_width = 80
-    top_border = "╭" + "─" * (border_width - 2) + "╮"
-    middle_border = "├" + "─" * (border_width - 2) + "┤"
-    bottom_border = "╰" + "─" * (border_width - 2) + "╯"
+    """Print error summary with the fancy box style"""
+    # First clear any lingering output
+    sys.stdout.write("\r\033[K")
+    sys.stdout.flush()
     
-    print("\n" + top_border)
-    print("│ " + "ERROR SUMMARY".center(border_width - 4) + " │")
-    print(middle_border)
-    print("│ " + " " * (border_width - 4) + " │")
-    
-    # Split the summary by lines and format each line
-    summary_lines = summary.split('\n')
-    for line in summary_lines:
-        # Handle empty lines
-        if not line.strip():
-            print("│ " + " " * (border_width - 4) + " │")
-        else:
-            # Format line to fit within border
-            print("│ " + line.ljust(border_width - 4)[:border_width - 4] + " │")
-    
-    print("│ " + " " * (border_width - 4) + " │")
-    print(bottom_border)
+    # Use the fancy summary with an error title
+    OutputManager.fancy_summary("ERROR SUMMARY", summary)
     
     # Flush to ensure immediate display
     sys.stdout.flush()
