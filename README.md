@@ -28,9 +28,11 @@ This system uses computer vision and machine learning to detect tennis courts an
 ### Prerequisites
 
 - Python 3.6+
-- CUDA-compatible GPU (recommended for faster processing)
+- CUDA-compatible GPU (recommended for faster processing, but not required)
 
 ### Installation
+
+#### Standard Installation (Windows/Mac/Linux)
 
 1. Clone repository:
    ```bash
@@ -49,18 +51,72 @@ This system uses computer vision and machine learning to detect tennis courts an
    pip install -r requirements.txt
    ```
 
-### Usage
+#### Raspberry Pi Installation
 
-1. Place tennis court image in the `images` folder with the name `input.png`
-2. Run script:
+For Raspberry Pi, we provide an optimized installation script:
+
+1. Clone repository:
+   ```bash
+   git clone https://github.com/yourusername/tennis-court-detection.git
+   cd tennis-court-detection
+   ```
+
+2. Run the Raspberry Pi installer script:
+   ```bash
+   bash install_dependencies_raspi.sh
+   ```
+
+The script will:
+- Install required system packages using apt
+- Set up optimized PyTorch for Raspberry Pi
+- Download the YOLOv5 model
+- Create necessary directories
+
+### Running the System
+
+#### Basic Usage
+
+1. Place a tennis court image in the `images` folder with the name `input.png`
+2. Run the script:
    ```bash
    python main.py
    ```
 3. Find the output in `images/output.png`
 
+#### Using a Custom Image
+
+Run with a specific input image:
+```bash
+python main.py --input path/to/your/image.jpg
+```
+
+#### Specify Output Location
+
+Save the result to a custom location:
+```bash
+python main.py --output path/to/save/result.png
+```
+
+#### Raspberry Pi Specific
+
+On Raspberry Pi, use python3 explicitly:
+```bash
+python3 main.py --input images/your_tennis_court.jpg
+```
+
+For better performance on Raspberry Pi, you can use the CPU device flag:
+```bash
+python3 main.py --device cpu
+```
+
+If you encounter SSL errors during model download:
+```bash
+python3 main.py --disable-ssl-verify
+```
+
 ## Command-Line Arguments
 
-Command line arguments to change stuff temporarily:
+The system supports various command-line arguments for customization:
 
 | Argument | Description | Default |
 |----------|-------------|---------|
@@ -70,6 +126,8 @@ Command line arguments to change stuff temporarily:
 | `--quiet` | Reduce console output | `False` |
 | `--show-labels` | Show detailed labels on output image | `False` |
 | `--show-court-labels` | Show court numbers on output image | `False` |
+| `--device` | Device to use for inference (`cpu` or `cuda`) | auto-detect |
+| `--disable-ssl-verify` | Disable SSL verification for downloads | `False` |
 
 ### Example Commands
 
@@ -103,82 +161,52 @@ python main.py --show-labels
 python main.py --show-court-labels
 ```
 
-## Output Visualization
-
-The output visualization is clean and easy to understand:
-
-- **Default Mode**: Shows court outlines, people with color-coded bounding boxes, and minimal labels
-- **Detailed Mode**: Add `--show-labels` to see detailed information about each person and their court position
-
-### Color Coding
-
-- **Green**: People in-bounds on a court
-- **Orange**: People on court sidelines (out-of-bounds)
-- **Red**: People not on any court
-
-## Configuration
-
-The system is highly configurable through the `Config` class in `main.py`. Key configuration sections include:
-
-### Court Detection
-
-```python
-# Color settings for court detection
-COURT_COLORS = {
-    "blue": {
-        "lower": [90, 40, 40],   # Lower HSV range for blue courts (in-bounds)
-        "upper": [120, 255, 255] # Upper HSV range for blue courts
-    },
-    "green": {
-        "lower": [40, 40, 40],   # Lower HSV range for green areas (out-of-bounds)
-        "upper": [80, 255, 255]  # Upper HSV range for green areas
-    }
-}
-
-# Court detection parameters
-class Court:
-    MIN_AREA = 5000              # Minimum court area in pixels
-    MAX_AREA = 150000            # Maximum court area in pixels
+#### Force CPU usage even if CUDA is available
+```bash
+python main.py --device cpu
 ```
-
-### Visualization
-
-```python
-class Visual:
-    PERSON_IN_BOUNDS_COLOR = (0, 255, 0)     # Green for people in-bounds
-    PERSON_OUT_BOUNDS_COLOR = (0, 165, 255)  # Orange for people out-of-bounds
-    PERSON_OFF_COURT_COLOR = (0, 0, 255)     # Red for people off court
-    SHOW_DETAILED_LABELS = False             # Whether to show detailed labels
-```
-
-## How It Works
-
-1. **Color Masking**: The system creates masks for blue areas (in-bounds) and green areas (out-of-bounds) using HSV color thresholds.
-
-2. **Court Identification**: 
-   - Blue regions adjacent to green are identified as potential courts
-   - Small isolated blue regions and those without green nearby are filtered out
-   - Each court is assigned a number for tracking
-
-3. **People Detection**:
-   - Uses YOLOv5 to detect people in the image
-   - Calculates foot position for each person
-
-4. **Position Analysis**:
-   - Determines if each person is on a blue area (in-bounds)
-   - Checks if they're on a green area (out-of-bounds)
-   - Maps each person to a specific court number
-
-5. **Visualization**:
-   - Draws court outlines with unique colors per court
-   - Shows people with color-coded bounding boxes
-   - Optional detailed labels with court information
-
-6. **Summary Reporting**:
-   - Reports counts of people by court and status in a clean box format
-   - Provides overall statistics
 
 ## Troubleshooting
+
+### Common Issues and Solutions
+
+#### Module Not Found Errors
+If you encounter "No module named X" errors:
+
+- For standard systems:
+  ```bash
+  pip install -r requirements.txt
+  ```
+
+- For Raspberry Pi:
+  ```bash
+  bash install_dependencies_raspi.sh
+  ```
+  
+  Or install specific modules:
+  ```bash
+  sudo apt update && sudo apt install -y python3-opencv python3-numpy python3-shapely python3-pip
+  pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+  ```
+
+#### YOLOv5 Model Missing
+If you get a model missing error:
+```bash
+mkdir -p models
+curl -L https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -o models/yolov5s.pt
+```
+
+#### CUDA / Memory Errors
+If you encounter CUDA out-of-memory errors:
+```bash
+python main.py --device cpu
+```
+
+#### SSL Certificate Errors
+If you encounter SSL verification issues:
+```bash
+python main.py --disable-ssl-verify
+```
 
 ### Court Detection Issues
 

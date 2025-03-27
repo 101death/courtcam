@@ -1548,13 +1548,26 @@ if __name__ == "__main__":
         
         # Provide specific installation commands for common modules
         if module_name == "cv2":
-            install_cmd = "pip install opencv-python"
+            if sys.platform == "linux" and os.uname().machine.startswith('arm'):
+                # Raspberry Pi specific OpenCV installation
+                install_cmd = "sudo apt update && sudo apt install -y python3-opencv\n\nOR for full requirements:\n\nsudo apt update && sudo apt install -y python3-opencv python3-numpy\npip3 install torch torchvision shapely"
+            else:
+                install_cmd = "pip install opencv-python"
         elif module_name == "numpy":
-            install_cmd = "pip install numpy"
+            if sys.platform == "linux" and os.uname().machine.startswith('arm'):
+                install_cmd = "sudo apt update && sudo apt install -y python3-numpy"
+            else:
+                install_cmd = "pip install numpy"
         elif module_name == "torch":
-            install_cmd = "pip install torch torchvision"
+            if sys.platform == "linux" and os.uname().machine.startswith('arm'):
+                install_cmd = "pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cpu"
+            else:
+                install_cmd = "pip install torch torchvision"
         elif module_name == "shapely":
-            install_cmd = "pip install shapely"
+            if sys.platform == "linux" and os.uname().machine.startswith('arm'):
+                install_cmd = "sudo apt update && sudo apt install -y python3-shapely\n\nOR\n\npip3 install shapely"
+            else:
+                install_cmd = "pip install shapely"
         else:
             install_cmd = f"pip install {module_name}\n\nOr to install all dependencies:\npip install -r requirements.txt"
         
@@ -1567,6 +1580,15 @@ if __name__ == "__main__":
         print("│ " + "To fix this error, run:".ljust(78) + " │")
         for line in install_cmd.split('\n'):
             print("│ " + line.ljust(78) + " │")
+            
+        # Add a one-line shortcut for all dependencies
+        if module_name in ["cv2", "numpy", "torch", "shapely"]:
+            if sys.platform == "linux" and os.uname().machine.startswith('arm'):
+                print("│ " + "─" * 78 + " │")
+                print("│ " + "QUICK FIX FOR RASPBERRY PI:".ljust(78) + " │")
+                print("│ " + "sudo apt update && sudo apt install -y python3-opencv python3-numpy".ljust(78) + " │")
+                print("│ " + "python3-shapely python3-pip && pip3 install torch torchvision".ljust(78) + " │")
+        
         print("╰" + "─" * 78 + "╯")
         sys.exit(1)
     except KeyboardInterrupt:
