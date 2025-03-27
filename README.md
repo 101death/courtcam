@@ -29,6 +29,17 @@ This system uses computer vision and machine learning to detect tennis courts an
 
 - Python 3.6+
 - CUDA-compatible GPU (recommended for faster processing, but not required)
+- The following Python packages:
+  - torch>=1.9.0
+  - torchvision>=0.10.0
+  - opencv-python>=4.5.0
+  - numpy>=1.20.0
+  - pandas>=2.0.0
+  - shapely>=1.7.0
+  - ultralytics>=8.0.0 (For YOLOv5)
+  - tqdm>=4.65.0 (For progress bars)
+  - Pillow>=10.0.0 (For image processing)
+  - matplotlib>=3.7.0 (For visualization)
 
 ### Installation
 
@@ -63,12 +74,14 @@ For Raspberry Pi, we provide an optimized installation script:
 
 2. Run the Raspberry Pi installer script:
    ```bash
-   bash install_dependencies_raspi.sh
+   chmod +x install_dependencies_raspi.sh
+   ./install_dependencies_raspi.sh
    ```
 
 The script will:
 - Install required system packages using apt
 - Set up optimized PyTorch for Raspberry Pi
+- Install all Python dependencies
 - Download the YOLOv5 model
 - Create necessary directories
 
@@ -228,3 +241,26 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 <div align="center">
   <p>Made with love for tennis enthusiasts</p>
 </div>
+
+## Debug Mode
+
+When running with the `--debug` flag, the system generates visualizations in the `images/debug/` directory to help understand the detection process:
+
+- **blue_mask_raw.png**: Raw blue court area detection
+- **green_mask.png**: Green out-of-bounds area detection
+- **filtered_court_mask.png**: Filtered court mask after processing
+- **courts_numbered.png**: Courts with assigned numbers
+- **foot_positions_debug.png**: Debug visualization of detected people's positions
+- **color_masks.png**: Combined visualization of all color masks
+
+These visualizations are invaluable for troubleshooting detection issues and understanding the internal workings of the system.
+
+## Model Requirements
+
+The system uses YOLOv5s by default for people detection. The model is automatically downloaded during installation but requires the following:
+
+- **Model File**: `models/yolov5s.pt` (14MB)
+- **Minimum RAM**: 2GB recommended
+- **GPU**: Optional but recommended for faster processing
+
+You can switch to smaller models like YOLOv5n for resource-constrained devices by modifying the `Config.Model.NAME` setting in the code.
