@@ -256,8 +256,8 @@ class OutputManager:
             is_progress: Ignored (maintained for compatibility)
             total: Ignored (maintained for compatibility)
         """
-        # Bold, highly visible spinning animation
-        frames = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]  # Braille spin animation
+        # Classic spinning animation with clear visibility
+        frames = ["|", "/", "-", "\\"]
         
         def animate():
             idx = 0
@@ -273,12 +273,12 @@ class OutputManager:
                     timestamp = f"{cls.GRAY}[{datetime.now().strftime('%H:%M:%S')}]{cls.RESET} "
                 
                 # Clear the line and print the new status with spinner
-                sys.stdout.write(f"\r\033[K{timestamp}{message} {cls.BLUE}{cls.BOLD}{frame}{cls.RESET}")
+                sys.stdout.write(f"\r\033[K{timestamp}{message} {cls.BOLD}{cls.CYAN}{frame}{cls.RESET}")
                 sys.stdout.flush()
                 
                 # Update the index for next frame and sleep briefly
                 idx = (idx + 1) % len(frames)
-                time.sleep(0.08)  # Even faster animation for more noticeable spinning
+                time.sleep(0.08)  # Fast animation for clear spinning movement
         
         # Run the animation in a separate thread
         cls._run_animation_thread(animate)
@@ -512,7 +512,7 @@ class OutputManager:
     
     @classmethod
     def get_potential_fixes(cls):
-        """Generate solutions for common errors with specific commands to run"""
+        """Generate detailed solutions for common errors with specific commands to run"""
         messages = []
         
         if not cls.errors:
@@ -523,44 +523,90 @@ class OutputManager:
             # Module not found errors
             if "ModuleNotFoundError" in error or "No module named" in error:
                 module_name = error.split("'")[1] if "'" in error else "unknown"
-                messages.append(f"Missing module: {module_name}\nRun: pip install -r requirements.txt")
+                if module_name == "cv2":
+                    messages.append(f"Missing OpenCV: {module_name}\nRun: pip install opencv-python")
+                elif module_name == "torch":
+                    messages.append(f"Missing PyTorch: {module_name}\nRun: pip install torch torchvision")
+                elif module_name == "numpy":
+                    messages.append(f"Missing NumPy: {module_name}\nRun: pip install numpy")
+                elif module_name == "shapely":
+                    messages.append(f"Missing Shapely: {module_name}\nRun: pip install shapely")
+                else:
+                    messages.append(f"Missing module: {module_name}\nRun: pip install {module_name}\nOr: pip install -r requirements.txt")
                 
             # Torch/CUDA errors
             elif "CUDA" in error or "cuda" in error:
-                messages.append("CUDA error detected\nRun: pip install -r requirements.txt")
+                if "out of memory" in error.lower():
+                    messages.append("CUDA out of memory error\nTry: Reduce batch size or image size\nOr: Use --device cpu flag to use CPU instead")
+                elif "not available" in error.lower():
+                    messages.append("CUDA not available\nRun: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118\nOr: Use CPU with --device cpu")
+                else:
+                    messages.append("CUDA error detected\nRun: pip install -r requirements.txt\nOr: Use CPU with --device cpu")
                 
             # OpenCV errors
             elif "cv2" in error or "OpenCV" in error:
-                messages.append("OpenCV error detected\nRun: pip install -r requirements.txt")
+                if "cannot read frame" in error.lower() or "empty frame" in error.lower():
+                    messages.append("OpenCV cannot read the image\nCheck that your image is valid and not corrupted")
+                else:
+                    messages.append("OpenCV error detected\nRun: pip install opencv-python")
                 
             # YOLOv5 model errors
             elif "model" in error.lower() and ("yolo" in error.lower() or "not found" in error.lower()):
-                messages.append(f"YOLOv5 model not found\nRun: mkdir -p models && wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O models/yolov5s.pt")
+                if "models directory" in error.lower():
+                    messages.append(f"Models directory not found\nRun: mkdir -p models")
+                else:
+                    messages.append(f"YOLOv5 model not found\nRun: mkdir -p models && wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O models/yolov5s.pt")
                 
             # Permission errors
             elif any(word in error.lower() for word in ["permission", "access", "denied"]):
                 if sys.platform == "win32":
-                    messages.append("Permission denied\nRun the script as Administrator or check file permissions")
+                    messages.append("Permission denied\nRun the script as Administrator or check file permissions\nRight-click Command Prompt/PowerShell and select 'Run as Administrator'")
                 else:
                     messages.append("Permission denied\nRun: chmod +x main.py && sudo ./main.py")
                 
             # Shapely errors
             elif "shapely" in error.lower():
-                messages.append("Shapely error detected\nRun: pip install -r requirements.txt")
+                messages.append("Shapely error detected\nRun: pip install shapely")
                 
             # Image errors
-            elif "Unable to open" in error or "load image" in error:
-                messages.append(f"Image not found at {Config.Paths.input_path()}\nRun: mkdir -p images && cp your_image.jpg images/input.png")
+            elif any(word in error.lower() for word in ["unable to open", "load image", "read image", "no such file"]):
+                messages.append(f"Image not found at {Config.Paths.input_path()}\nEnsure the image exists:\n  - Run: mkdir -p images && cp your_image.jpg images/input.png\n  - Or use: python main.py --input /path/to/your/image.jpg")
                 
-            # For any other errors, give a simpler message
+            # Directory errors
+            elif any(word in error.lower() for word in ["no such file or directory", "directory", "folder", "path"]):
+                if "images" in error.lower():
+                    messages.append("Images directory not found\nRun: mkdir -p images && cp your_image.jpg images/input.png")
+                elif "models" in error.lower():
+                    messages.append("Models directory not found\nRun: mkdir -p models && wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O models/yolov5s.pt")
+                else:
+                    dir_name = error.split("'")[1] if "'" in error else "directory"
+                    messages.append(f"Directory error: {dir_name}\nCheck that all required directories exist\nRun: mkdir -p images models")
+            
+            # Internet connection errors during YOLOv5 download
+            elif any(word in error.lower() for word in ["connection", "timeout", "network", "internet", "download"]):
+                messages.append("Network error detected\nCheck your internet connection and try again\nIf downloading YOLOv5 model fails, manually download from: https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt\nThen place it in the models/ directory")
+            
+            # Memory errors
+            elif "memory" in error.lower():
+                messages.append("Memory error detected\nTry with a smaller image or on a machine with more RAM")
+                
+            # SSL errors
+            elif "ssl" in error.lower():
+                messages.append("SSL error detected when downloading model\nTry: pip install certifi --upgrade\nOr: Run with --disable-ssl-verify flag")
+                
+            # Disk space errors
+            elif any(word in error.lower() for word in ["disk", "space", "storage", "write"]):
+                messages.append("Disk space or write error\nCheck that you have sufficient disk space and write permissions in the current directory")
+               
+            # For any other errors, give a more detailed message
             else:
-                messages.append(f"Error: {error}")
+                messages.append(f"Error: {error}\n\nGeneral troubleshooting:\n1. Ensure all dependencies are installed: pip install -r requirements.txt\n2. Check for proper YOLOv5 model: models/yolov5s.pt\n3. Verify input image exists and is readable\n4. Try running with --debug flag for more information")
         
         # Create a direct message with commands
         if len(messages) == 1:
             return messages[0]
         else:
-            return "Multiple issues detected:\n• " + "\n• ".join(messages)
+            return "Multiple issues detected:\n\n" + "\n\n".join(f"ISSUE {i+1}:\n{msg}" for i, msg in enumerate(messages))
         
         return "\n".join(messages)
 
@@ -894,20 +940,43 @@ def main():
     # Reset any previously tracked logs
     OutputManager.reset_logs()
     
-    # Load image
-    input_path = Config.Paths.input_path()
     try:
-        # Start animation for loading the image
-        OutputManager.animate("Loading image")
-        image = cv2.imread(input_path)
-        
-        # Stop animation and show result
-        OutputManager.stop_animation()
-        if image is not None:
-            OutputManager.log("Image loaded successfully", "SUCCESS")
-        else:
-            OutputManager.log(f"Unable to open the image at {input_path}", "ERROR")
-            # Show final summary with error and exit
+        # Load image
+        input_path = Config.Paths.input_path()
+        try:
+            # First ensure the images directory exists
+            images_dir = os.path.dirname(input_path)
+            if not os.path.exists(images_dir):
+                try:
+                    os.makedirs(images_dir, exist_ok=True)
+                    OutputManager.log(f"Created images directory at {images_dir}", "INFO")
+                except Exception as e:
+                    OutputManager.log(f"Cannot create images directory: {str(e)}", "ERROR")
+            
+            # Start animation for loading the image
+            OutputManager.animate("Loading image")
+            image = cv2.imread(input_path)
+            
+            # Stop animation and show result
+            OutputManager.stop_animation()
+            if image is not None:
+                OutputManager.log("Image loaded successfully", "SUCCESS")
+            else:
+                OutputManager.log(f"Unable to open the image at {input_path}", "ERROR")
+                # Show final summary with error and exit
+                processing_time = time.time() - start_time
+                final_summary = OutputManager.create_final_summary(
+                    people_count=None, 
+                    court_counts={}, 
+                    output_path=None,
+                    processing_time=processing_time,
+                    total_courts=0
+                )
+                print_error_summary(final_summary)
+                return 1
+        except Exception as e:
+            OutputManager.stop_animation()
+            OutputManager.log(f"Problem loading the image: {str(e)}", "ERROR")
             processing_time = time.time() - start_time
             final_summary = OutputManager.create_final_summary(
                 people_count=None, 
@@ -918,166 +987,223 @@ def main():
             )
             print_error_summary(final_summary)
             return 1
-    except Exception as e:
-        OutputManager.stop_animation()
-        OutputManager.log(f"Problem loading the image: {str(e)}", "ERROR")
-        processing_time = time.time() - start_time
-        final_summary = OutputManager.create_final_summary(
-            people_count=None, 
-            court_counts={}, 
-            output_path=None,
-            processing_time=processing_time,
-            total_courts=0
-        )
-        print_error_summary(final_summary)
-        return 1
-    
-    try:
+        
         # Set up debug folder
         try:
             debug_folder = Config.Paths.debug_dir()
             os.makedirs(debug_folder, exist_ok=True)
         except Exception as e:
             OutputManager.log(f"Can't create debug folder: {str(e)}", "WARNING")
+            debug_folder = None  # Set to None to prevent further debug saves
             # Continue execution even if debug folder can't be created
         
         # Detect tennis courts
-        OutputManager.animate("Analyzing court colors")
-        blue_mask = create_blue_mask(image)
-        green_mask = create_green_mask(image)
-        OutputManager.stop_animation()
-        OutputManager.log("Court colors analyzed", "SUCCESS")
-        
-        # Process the raw blue mask to avoid connecting unrelated areas like the sky
-        blue_mask_raw = blue_mask.copy()
-        
-        # Create court mask where green overrides blue
-        height, width = image.shape[:2]
-        court_mask = np.zeros((height, width), dtype=np.uint8)
-        court_mask[blue_mask_raw > 0] = 1  # Blue areas
-        court_mask[green_mask > 0] = 0     # Green areas override blue
-        
-        # Filter out blue regions that don't have any green nearby (like sky)
-        OutputManager.animate("Processing court regions")
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(blue_mask_raw, connectivity=8)
-        
-        # For each blue region, check if there's green nearby
-        filtered_court_mask = np.zeros_like(court_mask)
-        for i in range(1, num_labels):
-            region = (labels == i).astype(np.uint8)
-            area = stats[i, cv2.CC_STAT_AREA]
+        try:
+            OutputManager.animate("Analyzing court colors")
+            blue_mask = create_blue_mask(image)
+            green_mask = create_green_mask(image)
+            OutputManager.stop_animation()
+            OutputManager.log("Court colors analyzed", "SUCCESS")
             
-            # Skip very small regions
-            if area < Config.Court.MIN_AREA:
-                continue
+            # Process the raw blue mask to avoid connecting unrelated areas like the sky
+            blue_mask_raw = blue_mask.copy()
             
-            # Dilate the region to check for nearby green
-            kernel = np.ones((15, 15), np.uint8)
-            dilated_region = cv2.dilate(region, kernel, iterations=1)
+            # Create court mask where green overrides blue
+            height, width = image.shape[:2]
+            court_mask = np.zeros((height, width), dtype=np.uint8)
+            court_mask[blue_mask_raw > 0] = 1  # Blue areas
+            court_mask[green_mask > 0] = 0     # Green areas override blue
             
-            # Check if there's green nearby this blue region
-            green_nearby = cv2.bitwise_and(green_mask, dilated_region)
-            green_nearby_pixels = cv2.countNonZero(green_nearby)
+            # Filter out blue regions that don't have any green nearby (like sky)
+            OutputManager.animate("Processing court regions")
+            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(blue_mask_raw, connectivity=8)
             
-            # Only keep blue regions that have at least some green nearby
-            if green_nearby_pixels > 30:  # Reduced from 50 to be more lenient
-                # This is likely a court (not sky) - keep it
-                filtered_court_mask[region > 0] = court_mask[region > 0]
-        
-        OutputManager.stop_animation()
-        OutputManager.log("Court regions processed", "SUCCESS")
-        
-        # Use the filtered court mask for further processing
-        court_mask = filtered_court_mask
+            # For each blue region, check if there's green nearby
+            filtered_court_mask = np.zeros_like(court_mask)
+            for i in range(1, num_labels):
+                region = (labels == i).astype(np.uint8)
+                area = stats[i, cv2.CC_STAT_AREA]
+                
+                # Skip very small regions
+                if area < Config.Court.MIN_AREA:
+                    continue
+                
+                # Dilate the region to check for nearby green
+                kernel = np.ones((15, 15), np.uint8)
+                dilated_region = cv2.dilate(region, kernel, iterations=1)
+                
+                # Check if there's green nearby this blue region
+                green_nearby = cv2.bitwise_and(green_mask, dilated_region)
+                green_nearby_pixels = cv2.countNonZero(green_nearby)
+                
+                # Only keep blue regions that have at least some green nearby
+                if green_nearby_pixels > 30:  # Reduced from 50 to be more lenient
+                    # This is likely a court (not sky) - keep it
+                    filtered_court_mask[region > 0] = court_mask[region > 0]
+            
+            OutputManager.stop_animation()
+            OutputManager.log("Court regions processed", "SUCCESS")
+            
+            # Use the filtered court mask for further processing
+            court_mask = filtered_court_mask
+        except Exception as e:
+            OutputManager.stop_animation()
+            OutputManager.log(f"Error processing court colors: {str(e)}", "ERROR")
+            # Continue with blank masks as a fallback
+            height, width = image.shape[:2]
+            blue_mask_raw = np.zeros((height, width), dtype=np.uint8)
+            green_mask = np.zeros((height, width), dtype=np.uint8)
+            court_mask = np.zeros((height, width), dtype=np.uint8)
         
         # Save raw masks for debugging
-        try:
-            cv2.imwrite(os.path.join(debug_folder, "blue_mask_raw.png"), blue_mask_raw)
-            cv2.imwrite(os.path.join(debug_folder, "green_mask.png"), green_mask)
-            cv2.imwrite(os.path.join(debug_folder, "filtered_court_mask.png"), court_mask * 255)
-        except Exception as e:
-            OutputManager.log(f"Couldn't save debug masks: {str(e)}", "WARNING")
+        if debug_folder:
+            try:
+                cv2.imwrite(os.path.join(debug_folder, "blue_mask_raw.png"), blue_mask_raw)
+                cv2.imwrite(os.path.join(debug_folder, "green_mask.png"), green_mask)
+                cv2.imwrite(os.path.join(debug_folder, "filtered_court_mask.png"), court_mask * 255)
+            except Exception as e:
+                OutputManager.log(f"Couldn't save debug masks: {str(e)}", "WARNING")
         
         # Create colored visualization of masks
-        court_mask_viz = np.zeros((height, width, 3), dtype=np.uint8)
-        court_mask_viz[blue_mask_raw > 0] = [255, 0, 0]  # Blue for all blue areas
-        court_mask_viz[green_mask > 0] = [0, 255, 0]     # Green areas override blue
-        
-        # Highlight filtered courts in a brighter blue
-        filtered_blue = np.zeros_like(court_mask_viz)
-        filtered_blue[court_mask > 0] = [255, 127, 0]  # Bright blue for valid courts
-        cv2.addWeighted(court_mask_viz, 1, filtered_blue, 0.7, 0, court_mask_viz)
+        try:
+            court_mask_viz = np.zeros((height, width, 3), dtype=np.uint8)
+            court_mask_viz[blue_mask_raw > 0] = [255, 0, 0]  # Blue for all blue areas
+            court_mask_viz[green_mask > 0] = [0, 255, 0]     # Green areas override blue
+            
+            # Highlight filtered courts in a brighter blue
+            filtered_blue = np.zeros_like(court_mask_viz)
+            filtered_blue[court_mask > 0] = [255, 127, 0]  # Bright blue for valid courts
+            cv2.addWeighted(court_mask_viz, 1, filtered_blue, 0.7, 0, court_mask_viz)
+        except Exception as e:
+            OutputManager.log(f"Error creating court visualization: {str(e)}", "WARNING")
+            court_mask_viz = image.copy()  # Use original image as fallback
         
         # Assign court numbers to each separate blue region
-        OutputManager.animate("Identifying courts")
-        court_numbers_mask, courts = assign_court_numbers(court_mask)
-        OutputManager.stop_animation()
-        
-        # Output appropriate message based on court detection
-        if len(courts) == 0:
-            OutputManager.log("No tennis courts found in the image", "WARNING")
-        else:
-            OutputManager.log(f"Found {len(courts)} tennis court{'s' if len(courts) > 1 else ''}", "SUCCESS")
+        try:
+            OutputManager.animate("Identifying courts")
+            court_numbers_mask, courts = assign_court_numbers(court_mask)
+            OutputManager.stop_animation()
+            
+            # Output appropriate message based on court detection
+            if len(courts) == 0:
+                OutputManager.log("No tennis courts found in the image", "WARNING")
+            else:
+                OutputManager.log(f"Found {len(courts)} tennis court{'s' if len(courts) > 1 else ''}", "SUCCESS")
+        except Exception as e:
+            OutputManager.stop_animation()
+            OutputManager.log(f"Error identifying courts: {str(e)}", "ERROR")
+            # Create fallback empty data
+            courts = []
+            court_numbers_mask = np.zeros_like(court_mask)
         
         # Create a color-coded court mask for visualization
-        court_viz = np.zeros((height, width, 3), dtype=np.uint8)
-        
-        # Assign different colors to each court
-        court_colors = [
-            (255, 0, 0),    # Blue
-            (0, 0, 255),    # Red
-            (255, 0, 255),  # Purple
-            (0, 255, 255)   # Yellow
-        ]
-        
-        # Draw each court with a different color
-        for court in courts:
-            court_id = court['court_number']
-            color_idx = (court_id - 1) % len(court_colors)
-            court_color = court_colors[color_idx]
+        try:
+            court_viz = np.zeros((height, width, 3), dtype=np.uint8)
             
-            # Extract court mask
-            court_mask_individual = (court_numbers_mask == court_id).astype(np.uint8) * 255
-            # Find contours of the court
-            court_contours, _ = cv2.findContours(court_mask_individual, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            # Assign different colors to each court
+            court_colors = [
+                (255, 0, 0),    # Blue
+                (0, 0, 255),    # Red
+                (255, 0, 255),  # Purple
+                (0, 255, 255)   # Yellow
+            ]
             
-            # Draw the court area
-            court_area = np.zeros_like(court_viz)
-            court_area[court_mask_individual > 0] = court_color
-            cv2.addWeighted(court_viz, 1, court_area, 0.7, 0, court_viz)
-            
-            # Draw court number at center only if enabled in debug visualizations too
-            if Config.Visual.SHOW_COURT_LABELS:
-                cx, cy = int(court['centroid'][0]), int(court['centroid'][1])
-                cv2.putText(court_viz, f"Court {court_id}", (cx-40, cy), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            # Draw each court with a different color
+            for court in courts:
+                court_id = court['court_number']
+                color_idx = (court_id - 1) % len(court_colors)
+                court_color = court_colors[color_idx]
+                
+                # Extract court mask
+                court_mask_individual = (court_numbers_mask == court_id).astype(np.uint8) * 255
+                # Find contours of the court
+                court_contours, _ = cv2.findContours(court_mask_individual, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                
+                # Draw the court area
+                court_area = np.zeros_like(court_viz)
+                court_area[court_mask_individual > 0] = court_color
+                cv2.addWeighted(court_viz, 1, court_area, 0.7, 0, court_viz)
+                
+                # Draw court number at center only if enabled in debug visualizations too
+                if Config.Visual.SHOW_COURT_LABELS:
+                    cx, cy = int(court['centroid'][0]), int(court['centroid'][1])
+                    cv2.putText(court_viz, f"Court {court_id}", (cx-40, cy), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        except Exception as e:
+            OutputManager.log(f"Error creating court visualization: {str(e)}", "WARNING")
+            court_viz = image.copy()  # Use original image as fallback
         
         # Save court visualization
-        try:
-            cv2.imwrite(os.path.join(debug_folder, "courts_numbered.png"), court_viz)
-        except Exception as e:
-            OutputManager.log(f"Couldn't save court visualization: {str(e)}", "WARNING")
+        if debug_folder:
+            try:
+                cv2.imwrite(os.path.join(debug_folder, "courts_numbered.png"), court_viz)
+            except Exception as e:
+                OutputManager.log(f"Couldn't save court visualization: {str(e)}", "WARNING")
         
         # Create a semi-transparent overlay of the masks on the original image
-        alpha = 0.5  # Transparency factor
-        mask_overlay = image.copy()
-        # Apply the colored masks with transparency
-        cv2.addWeighted(court_mask_viz, alpha, mask_overlay, 1 - alpha, 0, mask_overlay)
+        try:
+            alpha = 0.5  # Transparency factor
+            mask_overlay = image.copy()
+            # Apply the colored masks with transparency
+            cv2.addWeighted(court_mask_viz, alpha, mask_overlay, 1 - alpha, 0, mask_overlay)
+        except Exception as e:
+            OutputManager.log(f"Error creating mask overlay: {str(e)}", "WARNING")
+            mask_overlay = image.copy()  # Use original image as fallback
         
         # Detect people
-        OutputManager.animate("Looking for people")
+        people = []
         try:
-            # Load the YOLO model
-            with suppress_stdout_stderr():
-                yolov5_path = os.path.join(Config.Paths.MODELS_DIR, f'{Config.Model.NAME}.pt')
-                model = torch.hub.load('ultralytics/yolov5', 'custom', path=yolov5_path, verbose=False)
-                model.conf = Config.Model.CONFIDENCE
-                model.iou = Config.Model.IOU
-                model.classes = Config.Model.CLASSES
+            OutputManager.animate("Looking for people")
+            
+            # Check if models directory exists
+            models_dir = Config.Paths.MODELS_DIR
+            if not os.path.exists(models_dir):
+                try:
+                    os.makedirs(models_dir, exist_ok=True)
+                    OutputManager.log(f"Created models directory at {models_dir}", "INFO")
+                except Exception as e:
+                    OutputManager.log(f"Cannot create models directory: {str(e)}", "ERROR")
+            
+            # Check if model file exists
+            yolov5_path = os.path.join(models_dir, f'{Config.Model.NAME}.pt')
+            if not os.path.exists(yolov5_path):
+                OutputManager.log(f"YOLOv5 model not found at {yolov5_path}", "ERROR")
+                raise FileNotFoundError(f"Model file not found. Download with: wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O {yolov5_path}")
+            
+            # Load the YOLO model with better error handling
+            try:
+                with suppress_stdout_stderr():
+                    model = torch.hub.load('ultralytics/yolov5', 'custom', path=yolov5_path, verbose=False)
+                    model.conf = Config.Model.CONFIDENCE
+                    model.iou = Config.Model.IOU
+                    model.classes = Config.Model.CLASSES
+            except Exception as e:
+                # Handle SSL certificate errors
+                if "ssl" in str(e).lower():
+                    OutputManager.log("SSL certificate error, trying with verification disabled", "WARNING")
+                    # Try again with SSL verification disabled
+                    ssl._create_default_https_context = ssl._create_unverified_context
+                    with suppress_stdout_stderr():
+                        model = torch.hub.load('ultralytics/yolov5', 'custom', path=yolov5_path, verbose=False)
+                        model.conf = Config.Model.CONFIDENCE
+                        model.iou = Config.Model.IOU
+                        model.classes = Config.Model.CLASSES
+                else:
+                    raise e
             
             # Run detection
             with suppress_stdout_stderr():
-                results = model(image)
+                try:
+                    results = model(image)
+                except RuntimeError as e:
+                    # Check for CUDA out of memory error
+                    if "CUDA out of memory" in str(e):
+                        OutputManager.log("CUDA out of memory, trying with CPU", "WARNING")
+                        # Try again with CPU
+                        model.cpu()
+                        results = model(image)
+                    else:
+                        raise e
             
             # Process results
             people = []
@@ -1107,32 +1233,54 @@ def main():
         except Exception as e:
             OutputManager.stop_animation()
             error_msg = str(e)
+            
+            # Handle different types of errors with specific messages
             if "model" in error_msg.lower() or "yolo" in error_msg.lower() or "no such file" in error_msg.lower():
                 OutputManager.log(f"YOLOv5 model not found: {error_msg}", "ERROR")
-                solution = "Model missing - run: mkdir -p models && wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O models/yolov5s.pt"
-                OutputManager.log(solution, "ERROR")
+                OutputManager.log("Model missing - run: mkdir -p models && wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O models/yolov5s.pt", "ERROR")
             elif "cuda" in error_msg.lower() or "gpu" in error_msg.lower():
                 OutputManager.log(f"CUDA error: {error_msg}", "ERROR")
-                solution = "CUDA error - run: pip install -r requirements.txt"
-                OutputManager.log(solution, "ERROR")
+                OutputManager.log("CUDA error - run: pip install -r requirements.txt", "ERROR")
+            elif "ssl" in error_msg.lower():
+                OutputManager.log(f"SSL error: {error_msg}", "ERROR")
+                OutputManager.log("SSL error - run: pip install certifi --upgrade", "ERROR")
+            elif "memory" in error_msg.lower():
+                OutputManager.log(f"Memory error: {error_msg}", "ERROR")
+                OutputManager.log("Memory error - try using a smaller image or reducing batch size", "ERROR")
+            elif "timeout" in error_msg.lower() or "connection" in error_msg.lower():
+                OutputManager.log(f"Network error: {error_msg}", "ERROR")
+                OutputManager.log("Network error - check your internet connection and try again", "ERROR")
             else:
                 OutputManager.log(f"Problem detecting people: {error_msg}", "ERROR")
+            
             # Continue with empty people list
             people = []
         
         # Determine if each person is on a court
-        OutputManager.animate("Analyzing positions")
         people_locations = []
+        try:
+            if people and courts:
+                OutputManager.animate("Analyzing positions")
+                
+                # Process each person
+                for person in people:
+                    court_idx, area_type = is_person_on_court(person, courts)
+                    people_locations.append((court_idx, area_type))
+                
+                OutputManager.stop_animation()
+                OutputManager.log("Positions analyzed successfully", "SUCCESS")
+            else:
+                # If no people or no courts, no need to analyze positions
+                for _ in range(len(people)):
+                    people_locations.append((-1, 'off_court'))
+        except Exception as e:
+            OutputManager.stop_animation()
+            OutputManager.log(f"Error analyzing positions: {str(e)}", "ERROR")
+            # Create fallback position data
+            for _ in range(len(people)):
+                people_locations.append((-1, 'off_court'))
         
-        # Process each person
-        for person in people:
-            court_idx, area_type = is_person_on_court(person, courts)
-            people_locations.append((court_idx, area_type))
-        
-        OutputManager.stop_animation()
-        OutputManager.log("Positions analyzed successfully", "SUCCESS")
-        
-        # Display summary and get court counts
+        # Calculate court counts for summary
         court_counts = {}
         for court_idx, area_type in people_locations:
             if court_idx >= 0:
@@ -1146,106 +1294,122 @@ def main():
             OutputManager.log(f"Court {court_num}: {court_counts[court_num]} people", "INFO")
         
         # Create debug visualization showing foot positions on mask
-        debug_foot_positions = court_viz.copy()
-        for person_idx, person in enumerate(people):
-            if 'foot_position' in person:
-                foot_x, foot_y = person['foot_position']
-                # Draw foot position marker (circle)
-                cv2.circle(debug_foot_positions, (foot_x, foot_y), 10, (255, 255, 255), -1)
-                cv2.circle(debug_foot_positions, (foot_x, foot_y), 10, (0, 0, 0), 2)
-                # Label with person index
-                cv2.putText(debug_foot_positions, f"P{person_idx+1}", (foot_x+15, foot_y), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-        
-        try:
-            cv2.imwrite(os.path.join(debug_folder, "foot_positions_debug.png"), debug_foot_positions)
-        except Exception as e:
-            OutputManager.log(f"Couldn't save foot positions debug image: {str(e)}", "WARNING")
+        if debug_folder and people:
+            try:
+                debug_foot_positions = court_viz.copy()
+                for person_idx, person in enumerate(people):
+                    if 'foot_position' in person:
+                        foot_x, foot_y = person['foot_position']
+                        # Draw foot position marker (circle)
+                        cv2.circle(debug_foot_positions, (foot_x, foot_y), 10, (255, 255, 255), -1)
+                        cv2.circle(debug_foot_positions, (foot_x, foot_y), 10, (0, 0, 0), 2)
+                        # Label with person index
+                        cv2.putText(debug_foot_positions, f"P{person_idx+1}", (foot_x+15, foot_y), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                
+                cv2.imwrite(os.path.join(debug_folder, "foot_positions_debug.png"), debug_foot_positions)
+            except Exception as e:
+                OutputManager.log(f"Couldn't save foot positions debug image: {str(e)}", "WARNING")
         
         # Create final output image
-        OutputManager.animate("Creating output image")
-        output_image = image.copy()
-        
-        # Draw court outlines with different colors
-        for court in courts:
-            court_id = court['court_number']
-            color_idx = (court_id - 1) % len(court_colors)
-            court_color = court_colors[color_idx]
+        try:
+            OutputManager.animate("Creating output image")
+            output_image = image.copy()
             
-            # Extract court mask
-            court_mask_individual = (court_numbers_mask == court_id).astype(np.uint8) * 255
-            # Find contours of the court
-            court_contours, _ = cv2.findContours(court_mask_individual, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            # Draw the court outline
-            cv2.drawContours(output_image, court_contours, -1, court_color, 2)
-            
-            # Draw court number at center only if enabled
-            if Config.Visual.SHOW_COURT_LABELS:
-                cx, cy = int(court['centroid'][0]), int(court['centroid'][1])
-                cv2.putText(output_image, f"Court {court_id}", (cx-40, cy), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-        
-        # Draw people and their locations
-        for i, person in enumerate(people):
-            court_idx, area_type = people_locations[i]
-            
-            # Draw bounding box and label
-            x1, y1, x2, y2 = person['bbox']
-            
-            # Choose color based on location
-            if court_idx >= 0:
-                court_number = court_idx + 1
-                if area_type == 'in_bounds':
-                    color = Config.Visual.PERSON_IN_BOUNDS_COLOR
-                    label = f"Court {court_number}" if Config.Visual.SHOW_DETAILED_LABELS else ""
-                else:  # out_bounds
-                    color = Config.Visual.PERSON_OUT_BOUNDS_COLOR
-                    label = f"Court {court_number} • Sideline" if Config.Visual.SHOW_DETAILED_LABELS else ""
-            else:
-                color = Config.Visual.PERSON_OFF_COURT_COLOR
-                label = "Not on court" if Config.Visual.SHOW_DETAILED_LABELS else ""
-            
-            # Draw bounding box
-            cv2.rectangle(output_image, (x1, y1), (x2, y2), color, 2)
-            
-            # Draw foot position marker - smaller and less intrusive
-            foot_x, foot_y = person['foot_position']
-            cv2.circle(output_image, (foot_x, foot_y), 3, color, -1)
-            
-            # Only draw text labels if specified
-            if Config.Visual.SHOW_DETAILED_LABELS and label:
-                # Draw label with black background for readability
-                text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 
-                                           Config.Visual.FONT_SCALE, 
-                                           Config.Visual.TEXT_THICKNESS)[0]
-                cv2.rectangle(output_image, (x1, y1 - text_size[1] - 5), 
-                             (x1 + text_size[0], y1), color, -1)
-                cv2.putText(output_image, label, (x1, y1 - 5), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 
-                           Config.Visual.FONT_SCALE, 
-                           Config.Visual.TEXT_COLOR, 
-                           Config.Visual.TEXT_THICKNESS)
+            # Draw court outlines with different colors
+            for court in courts:
+                court_id = court['court_number']
+                color_idx = (court_id - 1) % len(court_colors)
+                court_color = court_colors[color_idx]
                 
-                # Add person index number
-                cv2.putText(output_image, f"Person {i+1}", (x1, y2 + 20), 
-                            cv2.FONT_HERSHEY_SIMPLEX, Config.Visual.FONT_SCALE, 
-                            color, Config.Visual.TEXT_THICKNESS)
-            else:
-                # Just add a small number indicator for simpler display
-                cv2.putText(output_image, f"{i+1}", (x1, y1 - 5), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 
-                           Config.Visual.FONT_SCALE, 
-                           Config.Visual.TEXT_COLOR, 
-                           Config.Visual.TEXT_THICKNESS)
-        
-        OutputManager.stop_animation()
-        OutputManager.log("Output image generated", "SUCCESS")
+                # Extract court mask
+                court_mask_individual = (court_numbers_mask == court_id).astype(np.uint8) * 255
+                # Find contours of the court
+                court_contours, _ = cv2.findContours(court_mask_individual, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                
+                # Draw the court outline
+                cv2.drawContours(output_image, court_contours, -1, court_color, 2)
+                
+                # Draw court number at center only if enabled
+                if Config.Visual.SHOW_COURT_LABELS:
+                    cx, cy = int(court['centroid'][0]), int(court['centroid'][1])
+                    cv2.putText(output_image, f"Court {court_id}", (cx-40, cy), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            
+            # Draw people and their locations
+            for i, person in enumerate(people):
+                court_idx, area_type = people_locations[i]
+                
+                # Draw bounding box and label
+                x1, y1, x2, y2 = person['bbox']
+                
+                # Choose color based on location
+                if court_idx >= 0:
+                    court_number = court_idx + 1
+                    if area_type == 'in_bounds':
+                        color = Config.Visual.PERSON_IN_BOUNDS_COLOR
+                        label = f"Court {court_number}" if Config.Visual.SHOW_DETAILED_LABELS else ""
+                    else:  # out_bounds
+                        color = Config.Visual.PERSON_OUT_BOUNDS_COLOR
+                        label = f"Court {court_number} • Sideline" if Config.Visual.SHOW_DETAILED_LABELS else ""
+                else:
+                    color = Config.Visual.PERSON_OFF_COURT_COLOR
+                    label = "Not on court" if Config.Visual.SHOW_DETAILED_LABELS else ""
+                
+                # Draw bounding box
+                cv2.rectangle(output_image, (x1, y1), (x2, y2), color, 2)
+                
+                # Draw foot position marker - smaller and less intrusive
+                foot_x, foot_y = person['foot_position']
+                cv2.circle(output_image, (foot_x, foot_y), 3, color, -1)
+                
+                # Only draw text labels if specified
+                if Config.Visual.SHOW_DETAILED_LABELS and label:
+                    # Draw label with black background for readability
+                    text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 
+                                               Config.Visual.FONT_SCALE, 
+                                               Config.Visual.TEXT_THICKNESS)[0]
+                    cv2.rectangle(output_image, (x1, y1 - text_size[1] - 5), 
+                                 (x1 + text_size[0], y1), color, -1)
+                    cv2.putText(output_image, label, (x1, y1 - 5), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 
+                               Config.Visual.FONT_SCALE, 
+                               Config.Visual.TEXT_COLOR, 
+                               Config.Visual.TEXT_THICKNESS)
+                    
+                    # Add person index number
+                    cv2.putText(output_image, f"Person {i+1}", (x1, y2 + 20), 
+                                cv2.FONT_HERSHEY_SIMPLEX, Config.Visual.FONT_SCALE, 
+                                color, Config.Visual.TEXT_THICKNESS)
+                else:
+                    # Just add a small number indicator for simpler display
+                    cv2.putText(output_image, f"{i+1}", (x1, y1 - 5), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 
+                               Config.Visual.FONT_SCALE, 
+                               Config.Visual.TEXT_COLOR, 
+                               Config.Visual.TEXT_THICKNESS)
+            
+            OutputManager.stop_animation()
+            OutputManager.log("Output image generated", "SUCCESS")
+        except Exception as e:
+            OutputManager.stop_animation()
+            OutputManager.log(f"Error creating output image: {str(e)}", "ERROR")
+            output_image = image.copy()  # Use original image as fallback
         
         # Save the final output image
         output_path = Config.Paths.output_path()
         try:
             OutputManager.animate("Saving image")
+            
+            # Ensure output directory exists
+            output_dir = os.path.dirname(output_path)
+            if not os.path.exists(output_dir):
+                try:
+                    os.makedirs(output_dir, exist_ok=True)
+                    OutputManager.log(f"Created output directory at {output_dir}", "INFO")
+                except Exception as e:
+                    OutputManager.log(f"Cannot create output directory: {str(e)}", "ERROR")
+            
             cv2.imwrite(output_path, output_image)
             OutputManager.stop_animation()
             OutputManager.log("Output image saved successfully", "SUCCESS")
@@ -1277,8 +1441,20 @@ def main():
         
         return 0
     except Exception as e:
+        # This is the main catch-all for any unhandled exceptions in the try block
         OutputManager.stop_animation()
-        OutputManager.log(f"Error in main function: {str(e)}", "ERROR")
+        OutputManager.log(f"Unhandled error in main function: {str(e)}", "ERROR")
+        
+        # Create a basic summary with the error
+        processing_time = time.time() - start_time
+        final_summary = OutputManager.create_final_summary(
+            people_count=None, 
+            court_counts={}, 
+            output_path=None,
+            processing_time=processing_time,
+            total_courts=0
+        )
+        print_error_summary(final_summary)
         return 1
 
 # Add a backward compatibility wrapper for the old log function
@@ -1287,13 +1463,35 @@ def log(message, level="INFO"):
     OutputManager.log(message, level)
 
 def print_error_summary(summary):
-    """Print error summary with the fancy box style"""
+    """Print error summary with the fancy box style and troubleshooting information"""
     # First clear any lingering output
     sys.stdout.write("\r\033[K")
     sys.stdout.flush()
     
+    # Add troubleshooting section if errors are present
+    if OutputManager.errors:
+        # Get the potential fixes
+        fixes = OutputManager.get_potential_fixes()
+        if fixes:
+            if "TROUBLESHOOTING" not in summary:
+                summary += "\n\nTROUBLESHOOTING"
+                for fix_line in fixes.split('\n'):
+                    summary += f"\n{fix_line}"
+        
+        # Add common checking steps if not already present
+        if "requirements.txt" not in summary:
+            summary += "\n\nBASIC CHECKS:"
+            summary += "\n1. Ensure all dependencies are installed: pip install -r requirements.txt"
+            summary += "\n2. Check that the input image exists and is readable"
+            summary += "\n3. Verify YOLOv5 model is downloaded in models/ directory"
+            summary += "\n4. Check for sufficient disk space and permissions"
+            summary += "\n5. Run with --debug flag for more detailed information"
+    
     # Use the fancy summary with an error title
-    OutputManager.fancy_summary("ERROR SUMMARY", summary)
+    if OutputManager.errors:
+        OutputManager.fancy_summary("ERROR SUMMARY", summary)
+    else:
+        OutputManager.fancy_summary("WARNING SUMMARY", summary)
     
     # Flush to ensure immediate display
     sys.stdout.flush()
@@ -1308,42 +1506,115 @@ if __name__ == "__main__":
         parser.add_argument("--quiet", action="store_true", help="Reduce console output")
         parser.add_argument("--show-labels", action="store_true", help="Show detailed labels on output image")
         parser.add_argument("--show-court-labels", action="store_true", help="Show court numbers on output image")
-        args = parser.parse_args()
+        parser.add_argument("--device", type=str, choices=["cpu", "cuda"], help="Device to use for inference", default=None)
+        parser.add_argument("--disable-ssl-verify", action="store_true", help="Disable SSL verification for downloads")
+        
+        try:
+            args = parser.parse_args()
+        except Exception as e:
+            print(f"\nError parsing command-line arguments: {str(e)}")
+            print("Run with --help for usage information")
+            sys.exit(1)
+        
+        # Handle SSL verification setting early
+        if args.disable_ssl_verify:
+            ssl._create_default_https_context = ssl._create_unverified_context
+            print("SSL verification disabled")
         
         # Update config based on arguments
-        if args.input != Config.Paths.input_path():
-            Config.Paths.INPUT_IMAGE = os.path.basename(args.input)
-            Config.Paths.IMAGES_DIR = os.path.dirname(args.input)
-        
-        if args.output != Config.Paths.output_path():
-            Config.Paths.OUTPUT_IMAGE = os.path.basename(args.output)
-            Config.Paths.IMAGES_DIR = os.path.dirname(args.output)
-        
-        Config.DEBUG_MODE = args.debug
-        Config.Output.VERBOSE = not args.quiet
-        Config.Visual.SHOW_DETAILED_LABELS = args.show_labels
-        Config.Visual.SHOW_COURT_LABELS = args.show_court_labels
-        
-        sys.exit(main())
+        try:
+            if args.input != Config.Paths.input_path():
+                Config.Paths.INPUT_IMAGE = os.path.basename(args.input)
+                Config.Paths.IMAGES_DIR = os.path.dirname(args.input)
+            
+            if args.output != Config.Paths.output_path():
+                Config.Paths.OUTPUT_IMAGE = os.path.basename(args.output)
+                Config.Paths.IMAGES_DIR = os.path.dirname(args.output)
+            
+            Config.DEBUG_MODE = args.debug
+            Config.Output.VERBOSE = not args.quiet
+            Config.Visual.SHOW_DETAILED_LABELS = args.show_labels
+            Config.Visual.SHOW_COURT_LABELS = args.show_court_labels
+            
+            sys.exit(main())
+        except Exception as e:
+            print(f"\nError setting up configuration: {str(e)}")
+            sys.exit(1)
     except ModuleNotFoundError as e:
         # For missing modules, provide direct installation instructions
         module_name = str(e).split("'")[1] if "'" in str(e) else "unknown"
-        error_message = f"Missing module: {module_name}\nRun: pip install -r requirements.txt"
+        error_message = f"Missing module: {module_name}"
+        install_cmd = ""
+        
+        # Provide specific installation commands for common modules
+        if module_name == "cv2":
+            install_cmd = "pip install opencv-python"
+        elif module_name == "numpy":
+            install_cmd = "pip install numpy"
+        elif module_name == "torch":
+            install_cmd = "pip install torch torchvision"
+        elif module_name == "shapely":
+            install_cmd = "pip install shapely"
+        else:
+            install_cmd = f"pip install {module_name}\n\nOr to install all dependencies:\npip install -r requirements.txt"
         
         # Create a simple formatted box to display the error
         print("\n" + "╭" + "─" * 78 + "╮")
         print("│ " + "ERROR: MODULE NOT FOUND".center(78) + " │")
         print("│ " + "─" * 78 + " │")
-        for line in error_message.split('\n'):
+        print("│ " + error_message.ljust(78) + " │")
+        print("│ " + "─" * 78 + " │")
+        print("│ " + "To fix this error, run:".ljust(78) + " │")
+        for line in install_cmd.split('\n'):
             print("│ " + line.ljust(78) + " │")
         print("╰" + "─" * 78 + "╯")
         sys.exit(1)
+    except KeyboardInterrupt:
+        # Handle user interruption gracefully
+        print("\n\n" + "╭" + "─" * 78 + "╮")
+        print("│ " + "PROCESS INTERRUPTED BY USER".center(78) + " │")
+        print("╰" + "─" * 78 + "╯")
+        sys.exit(130)  # Standard exit code for SIGINT
     except Exception as e:
         # For other unhandled exceptions, provide a generic error message
+        error_message = str(e)
+        possible_solution = ""
+        
+        # Try to provide helpful solutions for common errors
+        if "permission" in error_message.lower():
+            if sys.platform == "win32":
+                possible_solution = "Run as Administrator or check file permissions"
+            else:
+                possible_solution = "Try: chmod +x main.py && sudo ./main.py"
+        elif "disk" in error_message.lower() or "space" in error_message.lower():
+            possible_solution = "Check available disk space and write permissions"
+        elif "network" in error_message.lower() or "connection" in error_message.lower():
+            possible_solution = "Check your internet connection"
+        elif "import" in error_message.lower():
+            possible_solution = "Run: pip install -r requirements.txt"
+        elif "memory" in error_message.lower():
+            possible_solution = "Try using a smaller image or reduce batch size"
+        else:
+            possible_solution = "Check requirements with: pip install -r requirements.txt"
+        
         print("\n" + "╭" + "─" * 78 + "╮")
         print("│ " + "ERROR: UNHANDLED EXCEPTION".center(78) + " │")
         print("│ " + "─" * 78 + " │")
-        print("│ " + str(e).ljust(78) + " │")
-        print("│ " + "Check requirements with: pip install -r requirements.txt".ljust(78) + " │")
+        
+        # Split long error messages
+        wrapped_error = []
+        for chunk in [error_message[i:i+78] for i in range(0, len(error_message), 78)]:
+            wrapped_error.append(chunk)
+        
+        for line in wrapped_error[:3]:  # Limit to 3 lines to avoid huge error messages
+            print("│ " + line.ljust(78) + " │")
+        
+        if len(wrapped_error) > 3:
+            print("│ " + "...".ljust(78) + " │")
+        
+        print("│ " + "─" * 78 + " │")
+        print("│ " + "POSSIBLE SOLUTION:".ljust(78) + " │")
+        for sol_line in [possible_solution[i:i+78] for i in range(0, len(possible_solution), 78)]:
+            print("│ " + sol_line.ljust(78) + " │")
         print("╰" + "─" * 78 + "╯")
         sys.exit(1)
