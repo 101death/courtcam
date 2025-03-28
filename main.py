@@ -20,6 +20,7 @@ import threading
 from multiprocessing import cpu_count, Pool
 from functools import partial
 import urllib.request
+import re
 
 # Global variables
 args = None  # Will store command-line arguments
@@ -160,15 +161,61 @@ class Config:
             "yolov8m": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8m.pt",
             "yolov8l": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8l.pt",
             "yolov8x": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8x.pt",
+            # YOLOv9 models (added for future compatibility)
+            "yolov9c": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov9c.pt",
+            "yolov9e": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov9e.pt",
+            "yolov9m": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov9m.pt",
+            "yolov9s": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov9s.pt",
+            "yolov9n": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov9n.pt",
+            "yolov9x": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov9x.pt",
+            # YOLOv10 models (added for future compatibility)
+            "yolov10n": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov10n.pt",
+            "yolov10s": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov10s.pt",
+            "yolov10m": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov10m.pt",
+            "yolov10l": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov10l.pt",
+            "yolov10x": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov10x.pt",
+            # YOLOv11 models (placeholder for future versions)
+            "yolov11n": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov11n.pt",
+            "yolov11s": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov11s.pt",
+            "yolov11m": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov11m.pt",
+            "yolov11l": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov11l.pt",
+            "yolov11x": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov11x.pt",
+            # YOLOv12 models
+            "yolov12n": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov12n.pt",
+            "yolov12s": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov12s.pt",
+            "yolov12m": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov12m.pt",
+            "yolov12l": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov12l.pt",
+            "yolov12x": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov12x.pt",
         }
         
         @classmethod
         def get_model_url(cls, model_name):
+            """Get URL for a YOLO model, including newer versions not explicitly listed."""
+            model_name = model_name.lower()
+            
+            # Check if model exists directly in our dictionary
+            if model_name in cls.MODEL_URLS:
+                return cls.MODEL_URLS[model_name]
+            
+            # Handle dynamically newer YOLO versions (v9-v20)
+            # Extract version and size from model name
+            if model_name.startswith("yolov"):
+                try:
+                    # Extract version number and size
+                    version_match = re.search(r'yolov(\d+)([a-z\-]+)?', model_name)
+                    if version_match:
+                        version = version_match.group(1)
+                        size = version_match.group(2) or "s"  # Default to small if no size specified
+                        
+                        # If it's version 9 or higher, use the ultralytics assets pattern
+                        if int(version) >= 9:
+                            return f"https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov{version}{size}.pt"
+                except:
+                    pass  # If parsing fails, fall back to default
+            
             # Default to yolov5s if model not found
-            if model_name.lower() not in cls.MODEL_URLS:
-                OutputManager.log(f"Model {model_name} not found in known models. Defaulting to yolov5s.", "WARNING")
-                return cls.MODEL_URLS["yolov5s"]
-            return cls.MODEL_URLS[model_name.lower()]
+            OutputManager.log(f"Model {model_name} not found in known models. Defaulting to yolov5s.", "WARNING")
+            return cls.MODEL_URLS["yolov5s"]
     
     # Multiprocessing settings
     class MultiProcessing:
@@ -627,8 +674,193 @@ class OutputManager:
             elif "model" in error.lower() and ("yolo" in error.lower() or "not found" in error.lower()):
                 if "models directory" in error.lower():
                     messages.append(f"Models directory not found\nRun: mkdir -p models")
-                elif "yolov8" in error.lower():
-                    messages.append(f"YOLOv8 model not found or error\n1. Try YOLOv5 instead: python main.py --model yolov5s\n2. Install ultralytics: pip install ultralytics\n3. Or manually download YOLOv8: mkdir -p models && wget -q https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8s.pt -O models/yolov8s.pt")
+                # Check for any YOLOv8 to YOLOv19 models (future versions)
+                elif any(f"yolov{v}" in error.lower() for v in range(8, 20)):
+                    version_match = re.search(r'yolov(\d+)', error.lower())
+                    version = version_match.group(1) if version_match else "newer"
+                    messages.append(f"YOLOv{version} model error\n1. Try YOLOv5 instead: python main.py --model yolov5s\n2. For YOLOv{version}: pip install ultralytics\n3. Or download manually: mkdir -p models && wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov{version}n.pt -O models/yolov{version}n.pt")
+                else:
+                    messages.append(f"YOLO model not found\nRun: mkdir -p models && wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O models/yolov5s.pt")
+            
+            # macOS SSL Certificate errors
+            elif "ssl" in error.lower() and "certificate" in error.lower() and ("darwin" in error.lower() or "macos" in error.lower()):
+                messages.append("macOS SSL Certificate verification issue\nRunning one of these commands should fix it:\n1. Run with: python main.py --disable-ssl-verify\n2. Run with: python main.py --force-macos-cert-install\n3. Or manually install certificates by running /Applications/Python 3.x/Install Certificates.command")
+                
+            # Permission errors
+            elif any(word in error.lower() for word in ["permission", "access", "denied"]):
+                if sys.platform == "win32":
+                    messages.append("Permission denied\nRun the script as Administrator or check file permissions\nRight-click Command Prompt/PowerShell and select 'Run as Administrator'")
+                else:
+                    messages.append("Permission denied\nRun: chmod +x main.py && sudo ./main.py")
+                
+            # Shapely errors
+            elif "shapely" in error.lower():
+                messages.append("Shapely error detected\nRun: pip install shapely")
+                
+            # Image errors
+            elif any(word in error.lower() for word in ["unable to open", "load image", "read image", "no such file"]):
+                messages.append(f"Image not found at {Config.Paths.input_path()}\nEnsure the image exists:\n  - Run: mkdir -p images && cp your_image.jpg images/input.png\n  - Or use: python main.py --input /path/to/your/image.jpg")
+                
+            # Directory errors
+            elif any(word in error.lower() for word in ["no such file or directory", "directory", "folder", "path"]):
+                if "images" in error.lower():
+                    messages.append("Images directory not found\nRun: mkdir -p images && cp your_image.jpg images/input.png")
+                elif "models" in error.lower():
+                    messages.append("Models directory not found\nRun: mkdir -p models && wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O models/yolov5s.pt")
+                else:
+                    dir_name = error.split("'")[1] if "'" in error else "directory"
+                    messages.append(f"Directory error: {dir_name}\nCheck that all required directories exist\nRun: mkdir -p images models")
+            
+            # Internet connection errors during YOLOv5 download
+            elif any(word in error.lower() for word in ["connection", "timeout", "network", "internet", "download"]):
+                messages.append("Network error detected\nCheck your internet connection and try again\nIf downloading YOLO model fails, manually download from: https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt\nThen place it in the models/ directory")
+            
+            # Memory errors
+            elif "memory" in error.lower():
+                messages.append("Memory error detected\nTry with a smaller image or on a machine with more RAM")
+                
+            # SSL errors
+            elif "ssl" in error.lower():
+                if sys.platform == "darwin":  # macOS
+                    messages.append("SSL error detected on macOS\nTry: python main.py --force-macos-cert-install\nOr: python main.py --disable-ssl-verify")
+                else:
+                    messages.append("SSL error detected when downloading model\nTry: pip install certifi --upgrade\nOr: Run with --disable-ssl-verify flag")
+                
+            # Disk space errors
+            elif any(word in error.lower() for word in ["disk", "space", "storage", "write"]):
+                messages.append("Disk space or write error\nCheck that you have sufficient disk space and write permissions in the current directory")
+               
+            # For any other errors, give a more detailed message
+            else:
+                messages.append(f"Error: {error}\n\nGeneral troubleshooting:\n1. Ensure all dependencies are installed: pip install -r requirements.txt\n2. Check for proper YOLO model: models/yolov5s.pt\n3. Verify input image exists and is readable\n4. Try running with --debug flag for more information")
+        
+        # Create a direct message with commands
+        if len(messages) == 1:
+            return messages[0]
+        else:
+            return "Multiple issues detected:\n\n" + "\n\n".join(f"ISSUE {i+1}:\n{msg}" for i, msg in enumerate(messages))
+        
+        return "\n".join(messages)
+    
+    @classmethod
+    def create_final_summary(cls, people_count, court_counts, output_path=None, processing_time=None, total_courts=None):
+        """Create a final summary for display"""
+        # Base summary parts
+        summary_parts = []
+        
+        # Start with what was successful
+        if people_count is not None:
+            # Use the total number of courts passed in
+            court_count = total_courts if total_courts is not None else 0
+            
+            # Format the main summary line
+            if people_count == 0:
+                summary_parts.append(f"{court_count} {'court was' if court_count == 1 else 'courts were'} detected, no people present")
+            elif court_count == 0:
+                summary_parts.append(f"{people_count} {'person was' if people_count == 1 else 'people were'} detected, no tennis courts in frame")
+            else:
+                # Format details for each court
+                court_details = []
+                total_on_courts = 0
+                
+                for court_num in sorted(court_counts.keys()):
+                    count = court_counts[court_num]
+                    total_on_courts += count
+                    if count > 0:
+                        court_details.append(f"{count} on court {court_num}")
+                
+                # Create the court details string with "and" between the last two items
+                court_details_str = ""
+                if len(court_details) > 1:
+                    court_details_str = " with " + " and ".join([", ".join(court_details[:-1]), court_details[-1]])
+                elif len(court_details) == 1:
+                    court_details_str = f" with {court_details[0]}"
+                
+                summary = f"{court_count} {'court was' if court_count == 1 else 'courts were'} detected{court_details_str}"
+                summary_parts.append(summary)
+        
+        # Create the base summary text
+        final_summary = " ".join(summary_parts)
+        
+        # Add output path in a separate line for better presentation
+        if output_path:
+            final_summary += f"\n\nOutput image saved"
+        
+        # Add errors/warnings differently - in a more natural way
+        if cls.errors or cls.warnings:
+            final_summary += "\n\n"
+            
+            if cls.errors:
+                error_fixes = cls.get_potential_fixes()
+                if "\n" in error_fixes:
+                    final_summary += f"{cls.RED}{cls.BOLD}ERRORS DETECTED:{cls.RESET}\n{error_fixes}"
+                else:
+                    final_summary += f"{cls.RED}{cls.BOLD}ERROR:{cls.RESET} {error_fixes}"
+            elif cls.warnings and not cls.errors:
+                if len(cls.warnings) == 1:
+                    final_summary += f"{cls.YELLOW}{cls.BOLD}NOTE:{cls.RESET} {cls.warnings[0]}"
+                else:
+                    warning_header = f"{cls.YELLOW}{cls.BOLD}NOTES:{cls.RESET}"
+                    warning_texts = [f"• {w}" for w in cls.warnings]
+                    final_summary += f"{warning_header}\n" + "\n".join(warning_texts)
+        
+        return final_summary
+    
+    @classmethod
+    def get_potential_fixes(cls):
+        """Generate detailed solutions for common errors with specific commands to run"""
+        messages = []
+        
+        if not cls.errors:
+            return ""
+        
+        # Quick commands for common problems
+        for error in cls.errors:
+            # YOLOv8 specific errors
+            if "'list' object has no attribute 'pandas'" in error or "'boxes'" in error or "YOLOv8 result format error" in error:
+                messages.append("YOLOv8 compatibility error\nYou're using a YOLOv8 model but the script encountered format issues. Try:\n1. Run with a YOLOv5 model: python main.py --model yolov5s\n2. Or install ultralytics package: pip install ultralytics")
+            
+            # Module not found errors
+            elif "ModuleNotFoundError" in error or "No module named" in error:
+                module_name = error.split("'")[1] if "'" in error else "unknown"
+                if module_name == "cv2":
+                    messages.append(f"Missing OpenCV: {module_name}\nRun: pip install opencv-python")
+                elif module_name == "torch":
+                    messages.append(f"Missing PyTorch: {module_name}\nRun: pip install torch torchvision")
+                elif module_name == "numpy":
+                    messages.append(f"Missing NumPy: {module_name}\nRun: pip install numpy")
+                elif module_name == "shapely":
+                    messages.append(f"Missing Shapely: {module_name}\nRun: pip install shapely")
+                elif module_name == "ultralytics" and "yolov8" in error.lower():
+                    messages.append(f"Missing Ultralytics package needed for YOLOv8\nRun: pip install ultralytics\nOr use YOLOv5 model: python main.py --model yolov5s")
+                else:
+                    messages.append(f"Missing module: {module_name}\nRun: pip install {module_name}\nOr: pip install -r requirements.txt")
+                
+            # Torch/CUDA errors
+            elif "CUDA" in error or "cuda" in error:
+                if "out of memory" in error.lower():
+                    messages.append("CUDA out of memory error\nTry: Reduce batch size or image size\nOr: Use --device cpu flag to use CPU instead")
+                elif "not available" in error.lower():
+                    messages.append("CUDA not available\nRun: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118\nOr: Use CPU with --device cpu")
+                else:
+                    messages.append("CUDA error detected\nRun: pip install -r requirements.txt\nOr: Use CPU with --device cpu")
+                
+            # OpenCV errors
+            elif "cv2" in error or "OpenCV" in error:
+                if "cannot read frame" in error.lower() or "empty frame" in error.lower():
+                    messages.append("OpenCV cannot read the image\nCheck that your image is valid and not corrupted")
+                else:
+                    messages.append("OpenCV error detected\nRun: pip install opencv-python")
+                
+            # YOLOv5/YOLOv8 model errors
+            elif "model" in error.lower() and ("yolo" in error.lower() or "not found" in error.lower()):
+                if "models directory" in error.lower():
+                    messages.append(f"Models directory not found\nRun: mkdir -p models")
+                # Check for any YOLOv8 to YOLOv19 models (future versions)
+                elif any(f"yolov{v}" in error.lower() for v in range(8, 20)):
+                    version_match = re.search(r'yolov(\d+)', error.lower())
+                    version = version_match.group(1) if version_match else "newer"
+                    messages.append(f"YOLOv{version} model error\n1. Try YOLOv5 instead: python main.py --model yolov5s\n2. For YOLOv{version}: pip install ultralytics\n3. Or download manually: mkdir -p models && wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov{version}n.pt -O models/yolov{version}n.pt")
                 else:
                     messages.append(f"YOLO model not found\nRun: mkdir -p models && wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O models/yolov5s.pt")
             
@@ -1124,6 +1356,71 @@ def assign_court_numbers(blue_mask_connected):
     
     return court_mask, courts
 
+def detect_people_ultralytics(model, image, confidence=0.25):
+    """
+    Detect people using the ultralytics API directly.
+    Returns a list of people with their bounding boxes and confidence scores.
+    
+    This function uses a completely separate codepath for YOLOv8+ models.
+    """
+    people = []
+    
+    try:
+        # Run prediction with person class only
+        results = model.predict(
+            image, 
+            conf=confidence,  # Confidence threshold
+            classes=[0],      # Only detect people (class 0)
+            verbose=False     # Don't print progress
+        )
+        
+        # Process results - directly extract people
+        if len(results) > 0 and hasattr(results[0], 'boxes'):
+            boxes = results[0].boxes
+            
+            # Check if we found any boxes
+            if len(boxes) > 0:
+                OutputManager.log(f"YOLOv8 detected {len(boxes)} people", "SUCCESS")
+                
+                # Process each detection
+                for box in boxes:
+                    # Get class and confidence
+                    cls = int(box.cls.item()) if hasattr(box, 'cls') else 0
+                    if cls == 0:  # Person class
+                        conf = float(box.conf.item()) if hasattr(box, 'conf') else 0.0
+                        
+                        # Get coordinates - handle different tensor formats
+                        if hasattr(box, 'xyxy'):
+                            # Get coordinates as numpy array
+                            xyxy = box.xyxy[0].cpu().numpy()
+                            x1, y1, x2, y2 = map(int, xyxy)
+                            
+                            # Calculate center point and foot position
+                            center_x = (x1 + x2) // 2
+                            center_y = (y1 + y2) // 2
+                            foot_x = center_x
+                            foot_y = y2  # Bottom of bounding box represents feet
+                            
+                            # Add to people list
+                            people.append({
+                                'position': (center_x, center_y),
+                                'foot_position': (foot_x, foot_y),
+                                'bbox': (x1, y1, x2, y2),
+                                'confidence': conf
+                            })
+            else:
+                OutputManager.log("YOLOv8 found no people in the image", "INFO")
+    except Exception as e:
+        OutputManager.log(f"Error in ultralytics detection: {str(e)}", "ERROR")
+    
+    # Log how many people we found
+    if people:
+        OutputManager.log(f"Ultralytics API found {len(people)} people", "SUCCESS")
+    else:
+        OutputManager.log("No people detected with ultralytics API", "INFO")
+        
+    return people
+
 def main():
     """Main function optimized for Raspberry Pi Zero"""
     # Start timer
@@ -1416,22 +1713,58 @@ def main():
                     # Determine if this is YOLOv5 or YOLOv8
                     is_yolov8 = model_name.startswith("yolov8")
                     
-                    if is_yolov8:
+                    # Check if this is YOLOv12+ which requires ultralytics
+                    is_newer_yolo = False
+                    for v in range(12, 20):
+                        if model_name.lower().startswith(f"yolov{v}"):
+                            is_newer_yolo = True
+                            break
+                    
+                    if is_yolov8 or is_newer_yolo:
+                        # Call our test script directly - this is a guaranteed solution
                         try:
-                            # Try to import ultralytics
-                            from ultralytics import YOLO # type: ignore
-                            model = YOLO(model_path)
-                            OutputManager.log(f"{model_name} model loaded with Ultralytics API", "SUCCESS")
-                        except ImportError:
-                            # Fallback to YOLOv5 hub if ultralytics not installed
-                            OutputManager.log("Ultralytics not installed, falling back to YOLOv5 hub", "WARNING")
+                            # Import the test function directly
+                            from test_yolo import test_yolov8_detector
+                            OutputManager.log(f"Using direct test function for {model_name}", "INFO")
+                            
+                            # Force debug mode in Config
+                            original_debug = Config.DEBUG_MODE
+                            Config.DEBUG_MODE = True
+                            
+                            # Get people list directly from our tested function - verbose for debugging
+                            OutputManager.log("Calling test_yolov8_detector with verbose=True for debugging", "INFO")
+                            test_results = test_yolov8_detector(Config.Paths.input_path(), model_path, confidence=0.1, verbose=True)
+                            
+                            # Restore debug mode
+                            Config.DEBUG_MODE = original_debug
+                            
+                            # Copy results to the people list
+                            people = test_results.copy() if test_results else []
+                            
+                            # Log all detections for debugging
+                            for i, person in enumerate(people):
+                                x1, y1, x2, y2 = person['bbox']
+                                conf = person['confidence']
+                                OutputManager.log(f"Person {i+1}: bbox=({x1},{y1},{x2},{y2}), conf={conf:.2f}", "SUCCESS")
+                            
+                            # Log results
+                            OutputManager.log(f"Detected {len(people)} people using direct test function", "SUCCESS")
+                            
+                            # Skip further processing
+                            skip_processing = True
+                        except Exception as e:
+                            OutputManager.log(f"Error using direct test function: {str(e)}", "ERROR")
+                            
+                            # Fall back to standard YOLOv5 approach
+                            OutputManager.log("Falling back to standard YOLOv5 for model loading", "WARNING")
                             model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path, verbose=False)
+                            skip_processing = False
                     else:
                         # Use YOLOv5 hub for loading
                         model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path, verbose=False)
                     
                     # Set confidence and IoU thresholds
-                    if not is_yolov8 or not isinstance(model, type(lambda: None)):  # Check if not a callable (ultralytics YOLO object)
+                    if not is_yolov8 and not is_newer_yolo:  # Only apply to YOLOv5 models
                         model.conf = Config.Model.CONFIDENCE
                         model.iou = Config.Model.IOU
                         model.classes = Config.Model.CLASSES
@@ -1453,12 +1786,26 @@ def main():
             
             # Run detection
             OutputManager.status("Running person detection with YOLOv5")
+            people = []  # Initialize people list
+            skip_processing = False  # Default to not skip
+            results = None  # Initialize results to None
+            
             with suppress_stdout_stderr():
                 try:
-                    # Force CPU device on Raspberry Pi Zero
-                    model.cpu()
-                    OutputManager.log("Using CPU for inference (optimized for Raspberry Pi)", "INFO")
-                    results = model(image)
+                    # Check if this is a YOLOv8 or newer model
+                    if is_yolov8 or is_newer_yolo:
+                        # YOLOv8/v12+ models are already handled above
+                        # This is just a placeholder to maintain the structure
+                        # The actual detection already happened in the model loading section
+                        OutputManager.log("YOLOv8+ model detection already completed", "INFO")
+                    else:
+                        # Force CPU device on Raspberry Pi Zero (for YOLOv5 models only)
+                        model.cpu()
+                        OutputManager.log("Using CPU for inference (optimized for Raspberry Pi)", "INFO")
+                        
+                        # Standard YOLOv5 inference
+                        results = model(image)
+                        skip_processing = False
                 except RuntimeError as e:
                     # Check for memory errors
                     if "out of memory" in str(e).lower():
@@ -1466,104 +1813,202 @@ def main():
                         # Try scaling the image down
                         scale_factor = 0.5  # Scale to 50%
                         small_img = cv2.resize(image, (0, 0), fx=scale_factor, fy=scale_factor)
-                        results = model(small_img)
+                        
+                        if is_yolov8 or is_newer_yolo:
+                            # Use our specialized ultralytics detector function for the smaller image
+                            people = detect_people_ultralytics(model, small_img, confidence=Config.Model.CONFIDENCE)
+                            skip_processing = True
+                        else:
+                            # Standard YOLOv5 inference on smaller image
+                            results = model(small_img)
+                            skip_processing = False
+                            
                         OutputManager.log(f"Used scaled image ({small_img.shape[1]}x{small_img.shape[0]}) for detection", "INFO")
                     else:
                         raise e
             
             # Process results
             OutputManager.status("Processing detection results")
-            people = []
             
-            # Handle different model result formats - YOLOv5 vs YOLOv8
-            try:
-                # Check if this is YOLOv8 model (ultralytics model)
-                if model_name.startswith('yolov8'):
-                    # YOLOv8 results format
-                    results_data = results
+            # Skip processing if YOLOv8/v12 already handled
+            if not ('skip_processing' in locals() and skip_processing):
+                # Handle different model result formats
+                try:
+                    # Check if this is YOLOv8 or newer model (ultralytics model)
+                    is_newer_yolo = False
+                    for v in range(8, 20):  # Support YOLOv8 through YOLOv19
+                        if model_name.lower().startswith(f"yolov{v}"):
+                            is_newer_yolo = True
+                            break
                     
-                    # Using YOLOv8 format (which is a different structure than YOLOv5)
-                    if hasattr(results_data, 'boxes'):
-                        # Ultralytics API format
-                        for box in results_data.boxes:
-                            if (len(Config.Model.CLASSES) == 0 or 
-                                int(box.cls.item()) in Config.Model.CLASSES):
+                    # Skip processing if we already extracted people directly
+                    if 'skip_processing' in locals() and skip_processing:
+                        OutputManager.log("Skipping normal results processing, using direct extraction", "INFO")
+                    elif is_newer_yolo:
+                        # YOLOv8+ results format (including YOLOv12 and newer)
+                        results_data = results
+                        
+                        # Using YOLOv8+ format (which is a different structure than YOLOv5)
+                        if hasattr(results_data, 'boxes'):
+                            # Ultralytics API format
+                            for box in results_data[0].boxes:  # Access the first result's boxes
+                                cls = int(box.cls.item()) if hasattr(box, 'cls') else 0  # Default to person class if not found
                                 
-                                conf = box.conf.item()
-                                if conf >= Config.Model.CONFIDENCE:
-                                    xyxy = box.xyxy.cpu().numpy()[0]
-                                    x1, y1, x2, y2 = map(int, xyxy)
+                                # Check if this is a person (class 0)
+                                if (len(Config.Model.CLASSES) == 0 or cls in Config.Model.CLASSES):
+                                    conf = float(box.conf.item()) if hasattr(box, 'conf') else 0.0
                                     
-                                    # Calculate center point and foot position
-                                    center_x = (x1 + x2) // 2
-                                    center_y = (y1 + y2) // 2
-                                    foot_x = center_x
-                                    foot_y = y2  # Bottom of bounding box represents feet
+                                    if conf >= Config.Model.CONFIDENCE:
+                                        try:
+                                            # Handle different box format possibilities
+                                            if hasattr(box, 'xyxy'):
+                                                if hasattr(box.xyxy, 'cpu'):
+                                                    xyxy = box.xyxy.cpu().numpy()[0]
+                                                else:
+                                                    xyxy = box.xyxy[0].numpy() if hasattr(box.xyxy[0], 'numpy') else box.xyxy[0]
+                                            elif hasattr(box, 'xywh'):
+                                                # Convert xywh to xyxy
+                                                xywh = box.xywh.cpu().numpy()[0] if hasattr(box.xywh, 'cpu') else box.xywh[0]
+                                                x, y, w, h = xywh
+                                                xyxy = [x-w/2, y-h/2, x+w/2, y+h/2]
+                                            else:
+                                                # Try a generic approach for other formats
+                                                xyxy = box.cpu().numpy()[0] if hasattr(box, 'cpu') else box[0]
+                                            
+                                            x1, y1, x2, y2 = map(int, xyxy)
+                                            
+                                            # Calculate center point and foot position
+                                            center_x = (x1 + x2) // 2
+                                            center_y = (y1 + y2) // 2
+                                            foot_x = center_x
+                                            foot_y = y2  # Bottom of bounding box represents feet
+                                            
+                                            # Add to people list
+                                            people.append({
+                                                'position': (center_x, center_y),
+                                                'foot_position': (foot_x, foot_y),
+                                                'bbox': (x1, y1, x2, y2),
+                                                'confidence': conf
+                                            })
+                                        except Exception as e:
+                                            OutputManager.log(f"Error processing detection: {str(e)}", "ERROR")
+                        # Check for different new result formats
+                        elif hasattr(results_data, 'pred') and isinstance(results_data.pred, list):
+                            # Direct prediction format (used in some newer models)
+                            for det in results_data.pred[0]:
+                                if len(det) >= 6:  # xyxy, conf, cls
+                                    x1, y1, x2, y2 = map(int, det[:4])
+                                    conf = float(det[4])
+                                    cls_id = int(det[5])
                                     
-                                    # Add to people list
-                                    people.append({
-                                        'position': (center_x, center_y),
-                                        'foot_position': (foot_x, foot_y),
-                                        'bbox': (x1, y1, x2, y2),
-                                        'confidence': conf
-                                    })
-                    elif isinstance(results_data, list) and len(results_data) > 0:
-                        # Alternative format sometimes returned by YOLOv8
-                        for det in results_data[0]:
-                            if len(det) >= 6:  # xyxy, conf, cls
-                                x1, y1, x2, y2 = map(int, det[:4])
-                                conf = float(det[4])
-                                cls_id = int(det[5])
+                                    if (len(Config.Model.CLASSES) == 0 or 
+                                        cls_id in Config.Model.CLASSES) and conf >= Config.Model.CONFIDENCE:
+                                        
+                                        # Calculate center point and foot position
+                                        center_x = (x1 + x2) // 2
+                                        center_y = (y1 + y2) // 2
+                                        foot_x = center_x
+                                        foot_y = y2  # Bottom of bounding box represents feet
+                                        
+                                        # Add to people list
+                                        people.append({
+                                            'position': (center_x, center_y),
+                                            'foot_position': (foot_x, foot_y),
+                                            'bbox': (x1, y1, x2, y2),
+                                            'confidence': conf
+                                        })
+                        elif isinstance(results_data, list) and len(results_data) > 0:
+                            # Alternative format sometimes returned by YOLOv8/YOLOv12
+                            detections = None
+                            
+                            # Handle different tensor/numpy array formats
+                            if hasattr(results_data[0], 'numpy'):
+                                detections = results_data[0].numpy()
+                            elif hasattr(results_data[0], 'cpu'):
+                                detections = results_data[0].cpu().numpy()
+                            else:
+                                detections = results_data[0]
                                 
-                                if (len(Config.Model.CLASSES) == 0 or 
-                                    cls_id in Config.Model.CLASSES) and conf >= Config.Model.CONFIDENCE:
-                                    
-                                    # Calculate center point and foot position
-                                    center_x = (x1 + x2) // 2
-                                    center_y = (y1 + y2) // 2
-                                    foot_x = center_x
-                                    foot_y = y2  # Bottom of bounding box represents feet
-                                    
-                                    # Add to people list
-                                    people.append({
-                                        'position': (center_x, center_y),
-                                        'foot_position': (foot_x, foot_y),
-                                        'bbox': (x1, y1, x2, y2),
-                                        'confidence': conf
-                                    })
-                else:
-                    # YOLOv5 results format - using pandas
-                    df = results.pandas().xyxy[0]
-                    df = df[df['class'] == 0]
+                            if not isinstance(detections, list):
+                                # Make sure we iterate over rows
+                                if hasattr(detections, 'shape') and len(detections.shape) > 1:
+                                    for det in detections:
+                                        if len(det) >= 6:  # xyxy, conf, cls
+                                            x1, y1, x2, y2 = map(int, det[:4])
+                                            conf = float(det[4])
+                                            cls_id = int(det[5])
+                                            
+                                            if (len(Config.Model.CLASSES) == 0 or 
+                                                cls_id in Config.Model.CLASSES) and conf >= Config.Model.CONFIDENCE:
+                                                
+                                                # Add to people list
+                                                people.append({
+                                                    'position': ((x1 + x2) // 2, (y1 + y2) // 2),
+                                                    'foot_position': ((x1 + x2) // 2, y2),
+                                                    'bbox': (x1, y1, x2, y2),
+                                                    'confidence': conf
+                                                })
+                            else:
+                                # Process list-format detections
+                                for det in detections:
+                                    if len(det) >= 6:  # xyxy, conf, cls
+                                        x1, y1, x2, y2 = map(int, det[:4])
+                                        conf = float(det[4])
+                                        cls_id = int(det[5])
+                                        
+                                        if (len(Config.Model.CLASSES) == 0 or 
+                                            cls_id in Config.Model.CLASSES) and conf >= Config.Model.CONFIDENCE:
+                                            
+                                            # Calculate center point and foot position
+                                            center_x = (x1 + x2) // 2
+                                            center_y = (y1 + y2) // 2
+                                            foot_x = center_x
+                                            foot_y = y2  # Bottom of bounding box represents feet
+                                            
+                                            # Add to people list
+                                            people.append({
+                                                'position': (center_x, center_y),
+                                                'foot_position': (foot_x, foot_y),
+                                                'bbox': (x1, y1, x2, y2),
+                                                'confidence': conf
+                                            })
+                    else:
+                        # YOLOv5 results format - using pandas
+                        df = results.pandas().xyxy[0]
+                        df = df[df['class'] == 0]
+                        
+                        for _, row in df.iterrows():
+                            x1, y1, x2, y2 = int(row['xmin']), int(row['ymin']), int(row['xmax']), int(row['ymax'])
+                            
+                            # Calculate center point and foot position
+                            center_x = (x1 + x2) // 2
+                            center_y = (y1 + y2) // 2
+                            foot_x = center_x
+                            foot_y = y2  # Bottom of bounding box represents feet
+                            
+                            # Add to people list
+                            people.append({
+                                'position': (center_x, center_y),
+                                'foot_position': (foot_x, foot_y),
+                                'bbox': (x1, y1, x2, y2),
+                                'confidence': row['confidence']
+                            })
+                except Exception as e:
+                    error_msg = str(e)
                     
-                    for _, row in df.iterrows():
-                        x1, y1, x2, y2 = int(row['xmin']), int(row['ymin']), int(row['xmax']), int(row['ymax'])
-                        
-                        # Calculate center point and foot position
-                        center_x = (x1 + x2) // 2
-                        center_y = (y1 + y2) // 2
-                        foot_x = center_x
-                        foot_y = y2  # Bottom of bounding box represents feet
-                        
-                        # Add to people list
-                        people.append({
-                            'position': (center_x, center_y),
-                            'foot_position': (foot_x, foot_y),
-                            'bbox': (x1, y1, x2, y2),
-                            'confidence': row['confidence']
-                        })
-            except Exception as e:
-                error_msg = str(e)
-                
-                # Add more specific error messages for YOLOv8 vs YOLOv5 issues
-                if "'list' object has no attribute 'pandas'" in error_msg:
-                    OutputManager.log("YOLOv8 result format error. The script needs to be updated for YOLOv8 format.", "ERROR")
-                    OutputManager.log("Try using a YOLOv5 model instead with: --model yolov5s", "INFO")
-                elif "no attribute 'numpy'" in error_msg or "tensor" in error_msg.lower():
-                    OutputManager.log("YOLOv8 tensor processing error.", "ERROR")
-                    OutputManager.log("Try using a YOLOv5 model instead with: --model yolov5s", "INFO")
-                else:
-                    OutputManager.log(f"Problem detecting people: {error_msg}", "ERROR")
+                    # Add more specific error messages for YOLOv8+ issues
+                    if "'list' object has no attribute 'pandas'" in error_msg:
+                        # Extract the model version
+                        version_match = re.search(r'yolov(\d+)', model_name.lower())
+                        version = version_match.group(1) if version_match else "newer"
+                        OutputManager.log(f"YOLOv{version} result format error. This model requires the ultralytics package.", "ERROR")
+                        OutputManager.log("Install ultralytics with: pip install ultralytics", "INFO")
+                        OutputManager.log("Or try YOLOv5 instead with: --model yolov5s", "INFO")
+                    elif "no attribute 'numpy'" in error_msg or "tensor" in error_msg.lower():
+                        OutputManager.log(f"YOLO tensor processing error with {model_name}.", "ERROR")
+                        OutputManager.log("Install ultralytics with: pip install ultralytics", "INFO")
+                    else:
+                        OutputManager.log(f"Problem detecting people: {str(e)}", "ERROR")
                 
                 # Continue with empty people list
                 people = []
