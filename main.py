@@ -233,8 +233,9 @@ class Config:
     # Multiprocessing settings
     class MultiProcessing:
         ENABLED = True              # Enable multiprocessing
-        NUM_PROCESSES = 3           # Number of CPU cores to use
-        CHUNK_SIZE = 10             # Chunk size for processing
+        NUM_PROCESSES = 4           # Use all 4 cores of Raspberry Pi Zero 2W
+        CHUNK_SIZE = 5              # Reduced chunk size for more even distribution
+        RPI_OPTIMIZED = True        # Enable Raspberry Pi-specific optimizations
 
 class OutputManager:
     """
@@ -1150,9 +1151,15 @@ def process_courts_parallel(blue_contours, blue_mask, green_mask, height, width)
     process_func = partial(process_court_contour, blue_mask=blue_mask, green_mask=green_mask, 
                           height=height, width=width)
     
+    # Calculate optimal chunk size - important for Raspberry Pi performance
+    chunk_size = max(1, len(blue_contours) // (Config.MultiProcessing.NUM_PROCESSES * 2))
+    if Config.MultiProcessing.RPI_OPTIMIZED:
+        # Use smaller chunks on Raspberry Pi for better load balancing
+        chunk_size = min(chunk_size, Config.MultiProcessing.CHUNK_SIZE)
+    
     # Create a pool and process contours in parallel
     with Pool(processes=Config.MultiProcessing.NUM_PROCESSES) as pool:
-        results = pool.map(process_func, blue_contours)
+        results = pool.map(process_func, blue_contours, chunksize=chunk_size)
     
     # Filter None results and collect valid courts
     courts = [court for court in results if court is not None]
@@ -1179,9 +1186,15 @@ def analyze_people_positions_parallel(people, courts):
     # Create input data for the pool
     input_data = [(person, courts) for person in people]
     
+    # Calculate optimal chunk size - important for Raspberry Pi performance
+    chunk_size = max(1, len(people) // (Config.MultiProcessing.NUM_PROCESSES * 2))
+    if Config.MultiProcessing.RPI_OPTIMIZED:
+        # Use smaller chunks on Raspberry Pi for better load balancing
+        chunk_size = min(chunk_size, Config.MultiProcessing.CHUNK_SIZE)
+    
     # Create a pool and process positions in parallel
     with Pool(processes=Config.MultiProcessing.NUM_PROCESSES) as pool:
-        people_locations = pool.map(check_person_on_court, input_data)
+        people_locations = pool.map(check_person_on_court, input_data, chunksize=chunk_size)
     
     return people_locations
 
@@ -1197,8 +1210,20 @@ def detect_tennis_court(image, debug_folder=None):
     
     # Create masks
     OutputManager.status("Creating blue and green masks...")
-    blue_mask = create_blue_mask(image)
-    green_mask = create_green_mask(image)
+    
+    # Use parallel processing for color masks if multiprocessing is enabled
+    if Config.MultiProcessing.ENABLED and Config.MultiProcessing.NUM_PROCESSES > 1:
+        # Create masks in parallel for better performance
+        blue_mask, green_mask = create_color_masks_parallel(image)
+        OutputManager.log("Court colors analyzed using parallel processing", "SUCCESS")
+    else:
+        # Sequential processing
+        blue_mask = create_blue_mask(image)
+        green_mask = create_green_mask(image)
+        OutputManager.log("Court colors analyzed", "SUCCESS")
+        
+    if Config.Output.EXTRA_VERBOSE:
+        OutputManager.log(f"Blue mask: {np.count_nonzero(blue_mask)} pixels, Green mask: {np.count_nonzero(green_mask)} pixels", "INFO")
     
     # Save raw masks for debugging
     if debug_folder and Config.Output.VERBOSE:
@@ -1446,6 +1471,68 @@ def detect_people_ultralytics(model, image, confidence=0.25):
         
     return people
 
+def process_image_chunk(chunk_data):
+    """Process a chunk of image to create color masks in parallel"""
+    chunk, start_row, hsv_ranges = chunk_data
+    result_blue = np.zeros((chunk.shape[0], chunk.shape[1]), dtype=np.uint8)
+    result_green = np.zeros((chunk.shape[0], chunk.shape[1]), dtype=np.uint8)
+    
+    # Convert chunk to HSV
+    hsv_chunk = cv2.cvtColor(chunk, cv2.COLOR_BGR2HSV)
+    
+    # Process blue
+    blue_range = hsv_ranges['blue']
+    blue_mask = cv2.inRange(hsv_chunk, np.array(blue_range['lower']), np.array(blue_range['upper']))
+    result_blue = blue_mask
+    
+    # Process green
+    green_range = hsv_ranges['green']
+    green_mask = cv2.inRange(hsv_chunk, np.array(green_range['lower']), np.array(green_range['upper']))
+    result_green = green_mask
+    
+    return (result_blue, result_green, start_row)
+
+def create_color_masks_parallel(image):
+    """
+    Create blue and green masks in parallel, optimized for Raspberry Pi
+    Returns (blue_mask, green_mask)
+    """
+    if not Config.MultiProcessing.ENABLED or Config.MultiProcessing.NUM_PROCESSES <= 1:
+        # Sequential processing for single-core mode
+        blue_mask = create_blue_mask(image)
+        green_mask = create_green_mask(image)
+        return blue_mask, green_mask
+    
+    height, width = image.shape[:2]
+    blue_result = np.zeros((height, width), dtype=np.uint8)
+    green_result = np.zeros((height, width), dtype=np.uint8)
+    
+    # Divide the image into chunks
+    chunk_size = max(16, height // (Config.MultiProcessing.NUM_PROCESSES * 2))
+    chunks = []
+    
+    for i in range(0, height, chunk_size):
+        end_row = min(i + chunk_size, height)
+        chunk = image[i:end_row, :]
+        chunks.append((chunk, i, Config.COURT_COLORS))
+    
+    # Process chunks in parallel
+    with Pool(processes=Config.MultiProcessing.NUM_PROCESSES) as pool:
+        results = pool.map(process_image_chunk, chunks, chunksize=1)
+    
+    # Combine results
+    for blue_chunk, green_chunk, start_row in results:
+        chunk_height = blue_chunk.shape[0]
+        blue_result[start_row:start_row+chunk_height, :] = blue_chunk
+        green_result[start_row:start_row+chunk_height, :] = green_chunk
+    
+    # Apply morphological operations to the entire mask
+    kernel = np.ones((Config.Morphology.KERNEL_SIZE, Config.Morphology.KERNEL_SIZE), np.uint8)
+    blue_result = cv2.morphologyEx(blue_result, cv2.MORPH_CLOSE, kernel, iterations=Config.Morphology.ITERATIONS)
+    green_result = cv2.morphologyEx(green_result, cv2.MORPH_CLOSE, kernel, iterations=Config.Morphology.ITERATIONS)
+    
+    return blue_result, green_result
+
 def main():
     """Main function optimized for Raspberry Pi Zero"""
     # Start timer
@@ -1458,8 +1545,26 @@ def main():
     if Config.MultiProcessing.ENABLED:
         # Set the number of processes if not already set
         if Config.MultiProcessing.NUM_PROCESSES <= 0:
-            # Use 3 processes or the number of CPU cores if less than 3
-            Config.MultiProcessing.NUM_PROCESSES = min(3, cpu_count())
+            # Get available CPU cores
+            available_cores = cpu_count()
+            
+            # Check if we're on a Raspberry Pi
+            is_raspberry_pi = False
+            try:
+                with open('/proc/cpuinfo', 'r') as f:
+                    cpuinfo = f.read()
+                    is_raspberry_pi = 'BCM2835' in cpuinfo or 'BCM2711' in cpuinfo or 'BCM2708' in cpuinfo or 'BCM2709' in cpuinfo
+            except:
+                pass
+                
+            if is_raspberry_pi:
+                # Use all 4 cores on Raspberry Pi Zero 2W
+                Config.MultiProcessing.NUM_PROCESSES = min(4, available_cores)
+                Config.MultiProcessing.RPI_OPTIMIZED = True
+                OutputManager.log("Raspberry Pi detected, optimizing for maximum performance", "INFO")
+            else:
+                # For other systems, use N-1 cores to keep the system responsive
+                Config.MultiProcessing.NUM_PROCESSES = max(1, available_cores - 1)
         
         OutputManager.log(f"Multiprocessing enabled with {Config.MultiProcessing.NUM_PROCESSES} processes", "INFO")
     
@@ -1524,9 +1629,18 @@ def main():
         # Detect tennis courts
         try:
             OutputManager.status("Analyzing court colors")
-            blue_mask = create_blue_mask(image)
-            green_mask = create_green_mask(image)
-            OutputManager.log("Court colors analyzed", "SUCCESS")
+            
+            # Use parallel processing for color masks if multiprocessing is enabled
+            if Config.MultiProcessing.ENABLED and Config.MultiProcessing.NUM_PROCESSES > 1:
+                # Create masks in parallel for better performance
+                blue_mask, green_mask = create_color_masks_parallel(image)
+                OutputManager.log("Court colors analyzed using parallel processing", "SUCCESS")
+            else:
+                # Sequential processing
+                blue_mask = create_blue_mask(image)
+                green_mask = create_green_mask(image)
+                OutputManager.log("Court colors analyzed", "SUCCESS")
+                
             if Config.Output.EXTRA_VERBOSE:
                 OutputManager.log(f"Blue mask: {np.count_nonzero(blue_mask)} pixels, Green mask: {np.count_nonzero(green_mask)} pixels", "INFO")
             
@@ -2449,6 +2563,7 @@ if __name__ == "__main__":
         parser.add_argument("--processes", type=int, help="Number of processes to use for multiprocessing", default=Config.MultiProcessing.NUM_PROCESSES)
         parser.add_argument("--extra-verbose", action="store_true", help="Show extra detailed output for debugging")
         parser.add_argument("--force-macos-cert-install", action="store_true", help="Force macOS certificate installation")
+        parser.add_argument("--rpi-optimize", action="store_true", help="Enable Raspberry Pi Zero 2W specific optimizations")
         
         # Parse arguments
         try:
@@ -2498,6 +2613,13 @@ if __name__ == "__main__":
             Config.MultiProcessing.ENABLED = not args.no_multiprocessing
             if args.processes > 0:
                 Config.MultiProcessing.NUM_PROCESSES = args.processes
+            
+            # Enable Raspberry Pi optimizations if requested
+            if args.rpi_optimize:
+                Config.MultiProcessing.RPI_OPTIMIZED = True
+                Config.MultiProcessing.NUM_PROCESSES = 4  # Use all 4 cores on RPi Zero 2W
+                Config.MultiProcessing.CHUNK_SIZE = 5     # Smaller chunks for better load balancing
+                print("Raspberry Pi Zero 2W optimizations enabled")
             
             # Update extra verbose setting
             if args.extra_verbose:
