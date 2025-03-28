@@ -141,7 +141,6 @@ The system supports various command-line arguments for customization:
 | `--device` | Device to use for inference (`cpu` or `cuda`) | auto-detect |
 | `--disable-ssl-verify` | Disable SSL verification for downloads | `False` |
 | `--extra-verbose` | Show detailed detection information | `False` |
-| `--rpi-optimize` | Enable Raspberry Pi Zero 2W specific optimizations | `False` |
 
 ### Example Commands
 
@@ -163,16 +162,6 @@ python main.py --debug
 #### Show detailed labels on the output image
 ```bash
 python main.py --show-labels
-```
-
-#### Raspberry Pi Zero 2W Optimized Mode
-```bash
-python3 main.py --rpi-optimize --model yolov5s --device cpu
-```
-
-#### Maximum Performance on Raspberry Pi
-```bash
-python3 main.py --rpi-optimize --model yolov5s --device cpu --quiet
 ```
 
 ## Troubleshooting
@@ -272,39 +261,3 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 <div align="center">
   <p>Made with ❤️ for tennis enthusiasts</p>
 </div>
-
-## Raspberry Pi Zero 2W Optimizations
-
-This system is now heavily optimized for the Raspberry Pi Zero 2W, with several performance enhancements:
-
-### Enhanced Multiprocessing
-
-- **Quad-Core Utilization**: Automatically detects the Raspberry Pi and utilizes all 4 cores for image processing
-- **Parallel Mask Generation**: Image color masking is parallelized for faster court detection
-- **Dynamic Chunk Sizing**: Optimizes workload distribution based on image size and available cores
-- **Balanced Load Distribution**: Uses smaller chunk sizes for more even distribution of work across cores
-
-### Performance Tips
-
-For maximum performance on Raspberry Pi Zero 2W:
-
-1. **Lower Resolution Images**: Use 1280x720 images instead of higher resolutions
-2. **Lightweight Models**: Use `yolov5s` instead of larger models:
-   ```bash
-   python3 main.py --model yolov5s
-   ```
-3. **Disable Debug Mode**: Run without debug flag for faster processing:
-   ```bash
-   python3 main.py --model yolov5s --device cpu
-   ```
-4. **Memory Management**: Close other applications to free up memory
-5. **Cooling**: Use a small heatsink or fan as the Pi can throttle under sustained load
-
-### Memory-Efficient Processing
-
-The system automatically optimizes memory usage on the Raspberry Pi by:
-- Processing image data in chunks
-- Releasing memory after processing each section
-- Using appropriate data types to minimize memory footprint
-
-Most image processing tasks should now run 2-4× faster due to these optimizations.
