@@ -134,8 +134,8 @@ class Config:
     
     # Model settings
     class Model:
-        NAME = "yolov8x"             # YOLOv5 model size (yolov5s, yolov5m, yolov5l, etc.)
-        CONFIDENCE = 0.3             # Detection confidence threshold
+        NAME = "yolov5x"             # YOLOv5 model size (yolov5s, yolov5m, yolov5l, etc.)
+        CONFIDENCE = 0.1             # Detection confidence threshold (lowered from 0.3)
         IOU = 0.45                   # IoU threshold
         CLASSES = [0]                # Only detect people (class 0)
         
@@ -1733,7 +1733,7 @@ def main():
                             
                             # Get people list directly from our tested function - verbose for debugging
                             OutputManager.log("Calling test_yolov8_detector with verbose=True for debugging", "INFO")
-                            test_results = test_yolov8_detector(Config.Paths.input_path(), model_path, confidence=0.1, verbose=True)
+                            test_results = test_yolov8_detector(Config.Paths.input_path(), model_path, confidence=0.05, verbose=True)
                             
                             # Restore debug mode
                             Config.DEBUG_MODE = original_debug
