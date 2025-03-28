@@ -180,3 +180,8 @@ cython_debug/
 *.engine
 *.engine
 *.engine
+
+# Project specific
+images/debug/
+test_output/
+models/

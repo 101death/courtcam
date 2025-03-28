@@ -27,6 +27,7 @@ import importlib.util
 import traceback
 from collections import Counter
 import logging
+import subprocess
 
 # Global variables
 args = None  # Will store command-line arguments
@@ -1201,7 +1202,7 @@ def detect_tennis_court(image, debug_folder=None):
     green_mask = create_green_mask(image)
     
     # Save raw masks for debugging
-    if debug_folder and Config.Output.VERBOSE:
+    if debug_folder and Config.DEBUG_MODE and Config.Output.VERBOSE:
         cv2.imwrite(os.path.join(debug_folder, "blue_mask_raw.png"), blue_mask)
         cv2.imwrite(os.path.join(debug_folder, "green_mask_raw.png"), green_mask)
     
@@ -1213,7 +1214,7 @@ def detect_tennis_court(image, debug_folder=None):
     valid_courts = process_courts_parallel(blue_contours, blue_mask, green_mask, height, width)
     
     # Save debug visualizations
-    if debug_folder and Config.Output.VERBOSE:
+    if debug_folder and Config.DEBUG_MODE and Config.Output.VERBOSE:
         # Create visualization of masks
         masks_viz = np.zeros((height, width, 3), dtype=np.uint8)
         masks_viz[blue_mask > 0] = [255, 0, 0]  # Blue
@@ -1513,9 +1514,12 @@ def main():
         
         # Set up debug folder
         try:
-            debug_folder = Config.Paths.debug_dir()
-            os.makedirs(debug_folder, exist_ok=True)
-            OutputManager.log(f"Debug folder created at {debug_folder}", "DEBUG")
+            if Config.DEBUG_MODE:
+                debug_folder = Config.Paths.debug_dir()
+                os.makedirs(debug_folder, exist_ok=True)
+                OutputManager.log(f"Debug folder created at {debug_folder}", "DEBUG")
+            else:
+                debug_folder = None
         except Exception as e:
             OutputManager.log(f"Can't create debug folder: {str(e)}", "WARNING")
             debug_folder = None  # Set to None to prevent further debug saves
@@ -1585,7 +1589,7 @@ def main():
             court_mask = np.zeros((height, width), dtype=np.uint8)
         
         # Save raw masks for debugging
-        if debug_folder:
+        if debug_folder and Config.DEBUG_MODE:
             try:
                 cv2.imwrite(os.path.join(debug_folder, "blue_mask_raw.png"), blue_mask_raw)
                 cv2.imwrite(os.path.join(debug_folder, "green_mask.png"), green_mask)
@@ -1668,7 +1672,7 @@ def main():
             court_viz = image.copy()  # Use original image as fallback
         
         # Save court visualization
-        if debug_folder:
+        if debug_folder and Config.DEBUG_MODE:
             try:
                 cv2.imwrite(os.path.join(debug_folder, "courts_numbered.png"), court_viz)
                 OutputManager.log("Court visualization saved", "DEBUG")
@@ -2146,7 +2150,7 @@ def main():
             OutputManager.log(f"Court {court_num}: {court_counts[court_num]} people", "INFO")
         
         # Create debug visualization showing foot positions on mask
-        if debug_folder and people:
+        if debug_folder and Config.DEBUG_MODE and people:
             try:
                 debug_foot_positions = court_viz.copy()
                 for person_idx, person in enumerate(people):
@@ -2432,6 +2436,140 @@ def download_yolo_model(model_name, url=None, disable_ssl_verify=False):
         OutputManager.log(f"Failed to download {model_name}: {str(e)}", "ERROR")
         raise
 
+# Function to install ultralytics package
+def install_ultralytics():
+    """Install ultralytics package for YOLOv8 models"""
+    print("======================================================")
+    print("  Installing ultralytics package for YOLOv8 models")
+    print("======================================================")
+    
+    try:
+        # Check if pip is available
+        subprocess.check_call([sys.executable, "-m", "pip", "--version"])
+        
+        # Install ultralytics
+        print("\nInstalling ultralytics package...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "ultralytics"])
+        
+        # Verify installation
+        print("\nVerifying installation...")
+        subprocess.check_call([sys.executable, "-c", "import ultralytics; print(f'Ultralytics version: {ultralytics.__version__}')"])
+        
+        print("\n✅ Installation successful!")
+        print("\nYou can now use YOLOv8 models with the main script.")
+        print("Try running: python main.py --model yolov8x")
+        return True
+        
+    except subprocess.CalledProcessError as e:
+        print(f"\n❌ Error: {str(e)}")
+        print("\nManual installation instructions:")
+        print("1. Open a terminal or command prompt")
+        print("2. Run: pip install ultralytics")
+        print("3. Then run the main script with: python main.py --model yolov8x")
+        return False
+    except Exception as e:
+        print(f"\n❌ Unexpected error: {str(e)}")
+        return False
+
+# Function to test YOLOv8 detection
+def test_yolov8_detector(image_path, model_name="yolov8x.pt", confidence=0.15, verbose=True):
+    """Test YOLOv8 detection on an image"""
+    if verbose:
+        print(f"Testing YOLOv8 detection on {image_path} with model {model_name}")
+    
+    # Check if ultralytics is available
+    try:
+        from ultralytics import YOLO
+    except ImportError:
+        if verbose:
+            print("ERROR: ultralytics package is not installed.")
+            print("Install with: pip install ultralytics or use the install_ultralytics() function")
+        return []
+    
+    # Load the model
+    try:
+        model = YOLO(model_name)
+    except Exception as e:
+        if verbose:
+            print(f"Error loading model: {str(e)}")
+        return []
+    
+    # Load the image
+    if os.path.exists(image_path):
+        if verbose:
+            print(f"Image found: {image_path}")
+        image = cv2.imread(image_path)
+        if verbose:
+            print(f"Image size: {image.shape}")
+    else:
+        if verbose:
+            print(f"Image not found: {image_path}")
+        return []
+    
+    # Run prediction
+    try:
+        results = model.predict(
+            source=image,
+            conf=confidence,  # Person class only
+            classes=[0],      # Person class only
+            verbose=verbose,  # Only show output if verbose
+            save=False,       # Don't save output images
+            project="test_output",
+            name="yolo_test"
+        )
+    except Exception as e:
+        if verbose:
+            print(f"Error during prediction: {str(e)}")
+        return []
+    
+    # Process results
+    people = []
+    if len(results) > 0:
+        if verbose:
+            print(f"\nResults type: {type(results)}")
+            print(f"Number of results: {len(results)}")
+        
+        # Check for boxes
+        if hasattr(results[0], 'boxes'):
+            boxes = results[0].boxes
+            if verbose:
+                print(f"\nDetected boxes: {len(boxes)}")
+            
+            # Process each detection
+            for i, box in enumerate(boxes):
+                try:
+                    cls = int(box.cls.item()) if hasattr(box, 'cls') else -1
+                    conf = float(box.conf.item()) if hasattr(box, 'conf') else 0
+                    
+                    if cls == 0:  # Person class
+                        # Get coordinates
+                        xyxy = box.xyxy[0].cpu().numpy()
+                        x1, y1, x2, y2 = map(int, xyxy)
+                        
+                        # Add to people list
+                        person = {
+                            'position': ((x1 + x2) // 2, (y1 + y2) // 2),
+                            'foot_position': ((x1 + x2) // 2, y2),
+                            'bbox': (x1, y1, x2, y2),
+                            'confidence': conf
+                        }
+                        people.append(person)
+                        if verbose:
+                            print(f"Person {i+1}: bbox=({x1},{y1},{x2},{y2}), conf={conf:.2f}")
+                except Exception as e:
+                    if verbose:
+                        print(f"Error processing detection {i}: {str(e)}")
+            
+            if verbose:
+                print(f"\nTotal people detected: {len(people)}")
+        elif verbose:
+            print("No boxes attribute found in results")
+    elif verbose:
+        print("No results returned from model")
+    
+    # Return the people list for use in main.py
+    return people
+
 if __name__ == "__main__":
     try:
         # Add command-line arguments for easier use
@@ -2449,6 +2587,9 @@ if __name__ == "__main__":
         parser.add_argument("--processes", type=int, help="Number of processes to use for multiprocessing", default=Config.MultiProcessing.NUM_PROCESSES)
         parser.add_argument("--extra-verbose", action="store_true", help="Show extra detailed output for debugging")
         parser.add_argument("--force-macos-cert-install", action="store_true", help="Force macOS certificate installation")
+        # Add new arguments for merged functionality
+        parser.add_argument("--install-ultralytics", action="store_true", help="Install the ultralytics package")
+        parser.add_argument("--test-yolo", action="store_true", help="Run YOLO model test on the input image")
         
         # Parse arguments
         try:
@@ -2457,6 +2598,25 @@ if __name__ == "__main__":
             print(f"\nError parsing command-line arguments: {str(e)}")
             print("Run with --help for usage information")
             sys.exit(1)
+            
+        # Handle new merged functionality
+        if args.install_ultralytics:
+            success = install_ultralytics()
+            sys.exit(0 if success else 1)
+            
+        if args.test_yolo:
+            # Get image path from command line
+            image_path = args.input
+            
+            # Ensure models directory exists
+            if not os.path.exists(Config.Paths.MODELS_DIR):
+                os.makedirs(Config.Paths.MODELS_DIR, exist_ok=True)
+                print(f"Created models directory at {Config.Paths.MODELS_DIR}")
+            
+            # Run the test with verbose output
+            model_name = args.model
+            test_yolov8_detector(image_path, model_name=model_name, verbose=not args.quiet)
+            sys.exit(0)
         
         # Handle SSL verification setting early
         if args.disable_ssl_verify:
