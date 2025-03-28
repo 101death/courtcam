@@ -21,9 +21,22 @@ from multiprocessing import cpu_count, Pool
 from functools import partial
 import urllib.request
 import re
+import urllib.error
+import urllib.parse
+import importlib.util
+import traceback
+from collections import Counter
+import logging
 
 # Global variables
 args = None  # Will store command-line arguments
+
+# Check if ultralytics is installed for YOLOv8 models
+try:
+    import ultralytics
+    ULTRALYTICS_AVAILABLE = True
+except ImportError:
+    ULTRALYTICS_AVAILABLE = False
 
 # Fix macOS SSL certificate issues
 if sys.platform == 'darwin':
@@ -134,7 +147,7 @@ class Config:
     
     # Model settings
     class Model:
-        NAME = "yolov5x"             # YOLOv5 model size (yolov5s, yolov5m, yolov5l, etc.)
+        NAME = "yolov8x"             # YOLOv5 model size (yolov5s, yolov5m, yolov5l, etc.)
         CONFIDENCE = 0.1             # Detection confidence threshold (lowered from 0.3)
         IOU = 0.45                   # IoU threshold
         CLASSES = [0]                # Only detect people (class 0)
@@ -1366,6 +1379,12 @@ def detect_people_ultralytics(model, image, confidence=0.25):
     people = []
     
     try:
+        # Check if ultralytics is available
+        if not ULTRALYTICS_AVAILABLE:
+            OutputManager.log("Ultralytics package not installed - required for YOLOv8+ models", "ERROR")
+            OutputManager.log("Install with: pip install ultralytics", "INFO")
+            return people
+            
         # Run prediction with person class only
         results = model.predict(
             image, 
@@ -1412,6 +1431,12 @@ def detect_people_ultralytics(model, image, confidence=0.25):
                 OutputManager.log("YOLOv8 found no people in the image", "INFO")
     except Exception as e:
         OutputManager.log(f"Error in ultralytics detection: {str(e)}", "ERROR")
+        if "AttributeError" in str(e) and "module 'torch.nn.modules.module'" in str(e):
+            OutputManager.log("This seems to be a compatibility issue with PyTorch and ultralytics", "INFO")
+            OutputManager.log("Try updating PyTorch: pip install -U torch torchvision", "INFO")
+        elif "No module named 'ultralytics'" in str(e):
+            OutputManager.log("Ultralytics package is not installed", "ERROR")
+            OutputManager.log("Install with: pip install ultralytics", "INFO")
     
     # Log how many people we found
     if people:
@@ -1710,6 +1735,11 @@ def main():
                 with suppress_stdout_stderr():
                     OutputManager.status(f"Loading {model_name} model")
                     
+                    # Initialize people list and processing flags
+                    people = [] 
+                    skip_processing = False  # Default to not skip
+                    results = None  # Initialize results to None
+                    
                     # Determine if this is YOLOv5 or YOLOv8
                     is_yolov8 = model_name.startswith("yolov8")
                     
@@ -1721,44 +1751,72 @@ def main():
                             break
                     
                     if is_yolov8 or is_newer_yolo:
-                        # Call our test script directly - this is a guaranteed solution
-                        try:
-                            # Import the test function directly
-                            from test_yolo import test_yolov8_detector
-                            OutputManager.log(f"Using direct test function for {model_name}", "INFO")
+                        # Check if ultralytics is available
+                        if not ULTRALYTICS_AVAILABLE:
+                            OutputManager.log("Ultralytics package is not installed. YOLOv8+ requires it.", "ERROR")
+                            OutputManager.log("Install with: pip install ultralytics", "INFO")
+                            OutputManager.log("Falling back to YOLOv5s model", "WARNING")
                             
-                            # Force debug mode in Config
-                            original_debug = Config.DEBUG_MODE
-                            Config.DEBUG_MODE = True
+                            # Download YOLOv5s instead
+                            model_path = download_yolo_model(
+                                "yolov5s", 
+                                url=Config.Model.get_model_url("yolov5s"),
+                                disable_ssl_verify=disable_ssl
+                            )
+                            model_name = "yolov5s"
+                            is_yolov8 = False
+                            is_newer_yolo = False
                             
-                            # Get people list directly from our tested function - verbose for debugging
-                            OutputManager.log("Calling test_yolov8_detector with verbose=True for debugging", "INFO")
-                            test_results = test_yolov8_detector(Config.Paths.input_path(), model_path, confidence=0.05, verbose=True)
-                            
-                            # Restore debug mode
-                            Config.DEBUG_MODE = original_debug
-                            
-                            # Copy results to the people list
-                            people = test_results.copy() if test_results else []
-                            
-                            # Log all detections for debugging
-                            for i, person in enumerate(people):
-                                x1, y1, x2, y2 = person['bbox']
-                                conf = person['confidence']
-                                OutputManager.log(f"Person {i+1}: bbox=({x1},{y1},{x2},{y2}), conf={conf:.2f}", "SUCCESS")
-                            
-                            # Log results
-                            OutputManager.log(f"Detected {len(people)} people using direct test function", "SUCCESS")
-                            
-                            # Skip further processing
-                            skip_processing = True
-                        except Exception as e:
-                            OutputManager.log(f"Error using direct test function: {str(e)}", "ERROR")
-                            
-                            # Fall back to standard YOLOv5 approach
-                            OutputManager.log("Falling back to standard YOLOv5 for model loading", "WARNING")
+                            # Use YOLOv5 hub for loading
                             model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path, verbose=False)
-                            skip_processing = False
+                        else:
+                            # Call our test script directly - this is a guaranteed solution
+                            try:
+                                # Import the test function directly
+                                from test_yolo import test_yolov8_detector
+                                OutputManager.log(f"Using direct test function for {model_name}", "INFO")
+                                
+                                # Force debug mode in Config
+                                original_debug = Config.DEBUG_MODE
+                                Config.DEBUG_MODE = True
+                                
+                                # Get people list directly from our tested function - verbose for debugging
+                                OutputManager.log("Calling test_yolov8_detector with verbose=True for debugging", "INFO")
+                                test_results = test_yolov8_detector(Config.Paths.input_path(), model_path, confidence=0.05, verbose=True)
+                                
+                                # Restore debug mode
+                                Config.DEBUG_MODE = original_debug
+                                
+                                # Copy results to the people list
+                                people = test_results.copy() if test_results else []
+                                
+                                # Log all detections for debugging
+                                for i, person in enumerate(people):
+                                    x1, y1, x2, y2 = person['bbox']
+                                    conf = person['confidence']
+                                    OutputManager.log(f"Person {i+1}: bbox=({x1},{y1},{x2},{y2}), conf={conf:.2f}", "SUCCESS")
+                                
+                                # Log results
+                                OutputManager.log(f"Detected {len(people)} people using direct test function", "SUCCESS")
+                                
+                                # Skip further processing
+                                skip_processing = True
+                            except Exception as e:
+                                OutputManager.log(f"Error using direct test function: {str(e)}", "ERROR")
+                                
+                                # Fall back to loading the model directly with ultralytics
+                                try:
+                                    from ultralytics import YOLO
+                                    model = YOLO(model_path)
+                                    OutputManager.log(f"Loaded {model_name} directly with YOLO", "SUCCESS")
+                                    skip_processing = False
+                                except Exception as e2:
+                                    OutputManager.log(f"Error loading with YOLO: {str(e2)}", "ERROR")
+                                    
+                                    # Fall back to standard YOLOv5 approach as last resort
+                                    OutputManager.log("Falling back to standard YOLOv5 for model loading", "WARNING")
+                                    model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path, verbose=False)
+                                    skip_processing = False
                     else:
                         # Use YOLOv5 hub for loading
                         model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path, verbose=False)
@@ -1786,9 +1844,6 @@ def main():
             
             # Run detection
             OutputManager.status("Running person detection with YOLOv5")
-            people = []  # Initialize people list
-            skip_processing = False  # Default to not skip
-            results = None  # Initialize results to None
             
             with suppress_stdout_stderr():
                 try:
@@ -1798,6 +1853,9 @@ def main():
                         # This is just a placeholder to maintain the structure
                         # The actual detection already happened in the model loading section
                         OutputManager.log("YOLOv8+ model detection already completed", "INFO")
+                        # Check if we already have people detected from the YOLOv8 model
+                        if len(people) > 0:
+                            OutputManager.log(f"Using {len(people)} people already detected from YOLOv8", "SUCCESS")
                     else:
                         # Force CPU device on Raspberry Pi Zero (for YOLOv5 models only)
                         model.cpu()
@@ -1844,6 +1902,7 @@ def main():
                     # Skip processing if we already extracted people directly
                     if 'skip_processing' in locals() and skip_processing:
                         OutputManager.log("Skipping normal results processing, using direct extraction", "INFO")
+                        OutputManager.log(f"People already detected: {len(people)}", "INFO")
                     elif is_newer_yolo:
                         # YOLOv8+ results format (including YOLOv12 and newer)
                         results_data = results

@@ -1,37 +1,18 @@
 #!/usr/bin/env python3
 # This is a simple test script for YOLOv8 models
 
-try:
-    from ultralytics import YOLO
-    ULTRALYTICS_AVAILABLE = True
-except ImportError:
-    ULTRALYTICS_AVAILABLE = False
-    print("ERROR: ultralytics package is not installed.")
-    print("Install with: pip install ultralytics")
-
+from ultralytics import YOLO
 import cv2
 import os
 import sys
 
-def test_yolov8_detector(image_path, model_name="yolov8x.pt", confidence=0.05, verbose=True):
+def test_yolov8_detector(image_path, model_name="yolov8x.pt", confidence=0.15, verbose=True):
     """Test YOLOv8 detection on an image"""
     if verbose:
         print(f"Testing YOLOv8 detection on {image_path} with model {model_name}")
     
-    # Check if ultralytics is available
-    if not ULTRALYTICS_AVAILABLE:
-        if verbose:
-            print("ERROR: ultralytics package is not installed.")
-            print("Install with: pip install ultralytics")
-        return []
-    
     # Load the model
-    try:
-        model = YOLO(model_name)
-    except Exception as e:
-        if verbose:
-            print(f"Error loading model: {str(e)}")
-        return []
+    model = YOLO(model_name)
     
     # Load the image
     if os.path.exists(image_path):
@@ -46,20 +27,15 @@ def test_yolov8_detector(image_path, model_name="yolov8x.pt", confidence=0.05, v
         return []
     
     # Run prediction
-    try:
-        results = model.predict(
-            source=image,
-            conf=confidence,  # Use a lower confidence threshold to detect more people
-            classes=[0],      # Person class only
-            verbose=verbose,  # Only show output if verbose
-            save=verbose,     # Only save if verbose
-            project="test_output",
-            name="yolo_test"
-        )
-    except Exception as e:
-        if verbose:
-            print(f"Error during prediction: {str(e)}")
-        return []
+    results = model.predict(
+        source=image,
+        conf=confidence,  # Person class only
+        classes=[0],      # Person class only
+        verbose=verbose,  # Only show output if verbose
+        save=verbose,     # Only save if verbose
+        project="test_output",
+        name="yolo_test"
+    )
     
     # Process results
     people = []
@@ -114,11 +90,6 @@ if __name__ == "__main__":
     image_path = "images/input.png"
     if len(sys.argv) > 1:
         image_path = sys.argv[1]
-    
-    # Ensure models directory exists
-    if not os.path.exists("models"):
-        os.makedirs("models", exist_ok=True)
-        print("Created models directory")
     
     # Run the test with verbose output
     test_yolov8_detector(image_path, verbose=True) 
