@@ -33,7 +33,7 @@ args = None  # Will store command-line arguments
 
 # Check if ultralytics is installed for YOLOv8 models
 try:
-    import ultralytics
+    import ultralytics # type: ignore
     ULTRALYTICS_AVAILABLE = True
 except ImportError:
     ULTRALYTICS_AVAILABLE = False
@@ -1806,7 +1806,7 @@ def main():
                                 
                                 # Fall back to loading the model directly with ultralytics
                                 try:
-                                    from ultralytics import YOLO
+                                    from ultralytics import YOLO # type: ignore
                                     model = YOLO(model_path)
                                     OutputManager.log(f"Loaded {model_name} directly with YOLO", "SUCCESS")
                                     skip_processing = False
