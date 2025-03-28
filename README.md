@@ -3,7 +3,7 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![Python: 3.6+](https://img.shields.io/badge/Python-3.6+-blue.svg)
 ![OpenCV](https://img.shields.io/badge/CV-OpenCV-green.svg)
-![YOLOv5](https://img.shields.io/badge/Model-YOLOv5-lightgrey.svg)
+![YOLO](https://img.shields.io/badge/Models-YOLOv5/YOLOv8-lightgrey.svg)
 
 <div align="center">
   <img src="images/output.png" alt="Tennis Court Detection Example" width="600">
@@ -12,16 +12,17 @@
 
 ## Overview
 
-This system uses computer vision and machine learning to detect tennis courts and track people on them, providing real-time analysis of who is in-bounds or out-of-bounds on each court. Perfect for tennis facilities, coaches, and event organizers who need automated court monitoring.
+This advanced computer vision system detects tennis courts and tracks people on them, providing real-time analysis of who is in-bounds or out-of-bounds. Perfect for tennis facilities, coaches, and event organizers who need automated court monitoring with high accuracy and minimal setup.
 
 ### Features
 
-- **Court Detection**: Automatically identifies tennis courts using color analysis
-- **People Tracking**: Detects and tracks people using YOLOv5 object detection
-- **Position Analysis**: Determines if people are in-bounds, out-of-bounds, or off-court
-- **Court Numbering**: Numbers each court and tracks people per court
-- **Rich Visualization**: Outputs images with color-coded courts and player positions
-- **Configuration**: Highly customizable with easy-to-modify settings
+- **Court Detection**: Automatically identifies tennis courts using advanced color analysis algorithms
+- **People Tracking**: Detects and tracks people using state-of-the-art YOLOv5/YOLOv8 object detection
+- **Position Analysis**: Precisely determines if people are in-bounds, on sidelines, or off-court
+- **Multi-Court Support**: Numbers each court and tracks people per court automatically
+- **Rich Visualization**: Outputs detailed images with color-coded courts and player positions
+- **Flexible Configuration**: Highly customizable with easy-to-modify settings
+- **Multiple Model Support**: Works with both YOLOv5 and YOLOv8 models for optimal performance
 
 ## Quick Start
 
@@ -29,17 +30,14 @@ This system uses computer vision and machine learning to detect tennis courts an
 
 - Python 3.6+
 - CUDA-compatible GPU (recommended for faster processing, but not required)
-- The following Python packages:
-  - torch>=1.9.0
-  - torchvision>=0.10.0
-  - opencv-python>=4.5.0
-  - numpy>=1.20.0
-  - pandas>=2.0.0
-  - shapely>=1.7.0
-  - ultralytics>=8.0.0 (For YOLOv5)
-  - tqdm>=4.65.0 (For progress bars)
-  - Pillow>=10.0.0 (For image processing)
-  - matplotlib>=3.7.0 (For visualization)
+- Required Python packages (installed automatically via instructions below):
+  - torch & torchvision
+  - opencv-python
+  - numpy
+  - pandas
+  - shapely
+  - ultralytics (for YOLOv8 support)
+  - tqdm, pillow, matplotlib
 
 ### Installation
 
@@ -62,6 +60,11 @@ This system uses computer vision and machine learning to detect tennis courts an
    pip install -r requirements.txt
    ```
 
+4. Install YOLOv8 support (optional but recommended for better detection):
+   ```bash
+   python install_ultralytics.py
+   ```
+
 #### Raspberry Pi Installation
 
 For Raspberry Pi, we provide an optimized installation script:
@@ -74,16 +77,9 @@ For Raspberry Pi, we provide an optimized installation script:
 
 2. Run the Raspberry Pi installer script:
    ```bash
-   chmod +x install_dependencies_raspi.sh
-   ./install_dependencies_raspi.sh
+   chmod +x setup_linux.sh
+   ./setup_linux.sh
    ```
-
-The script will:
-- Install required system packages using apt
-- Set up optimized PyTorch for Raspberry Pi
-- Install all Python dependencies
-- Download the YOLOv5 model
-- Create necessary directories
 
 ### Running the System
 
@@ -103,6 +99,13 @@ Run with a specific input image:
 python main.py --input path/to/your/image.jpg
 ```
 
+#### Using YOLOv8 for Better Detection
+
+The system now supports YOLOv8 which provides better detection accuracy:
+```bash
+python main.py --model yolov8x
+```
+
 #### Specify Output Location
 
 Save the result to a custom location:
@@ -117,14 +120,9 @@ On Raspberry Pi, use python3 explicitly:
 python3 main.py --input images/your_tennis_court.jpg
 ```
 
-For better performance on Raspberry Pi, you can use the CPU device flag:
+For better performance on Raspberry Pi, you can use:
 ```bash
-python3 main.py --device cpu
-```
-
-If you encounter SSL errors during model download:
-```bash
-python3 main.py --disable-ssl-verify
+python3 main.py --device cpu --model yolov5s
 ```
 
 ## Command-Line Arguments
@@ -135,23 +133,25 @@ The system supports various command-line arguments for customization:
 |----------|-------------|---------|
 | `--input` | Path to input image | `images/input.png` |
 | `--output` | Path for output image | `images/output.png` |
+| `--model` | YOLO model to use (`yolov5s`, `yolov5m`, `yolov8n`, `yolov8s`, `yolov8x`, etc.) | `yolov8x` |
 | `--debug` | Enable debug mode with additional outputs | `False` |
 | `--quiet` | Reduce console output | `False` |
 | `--show-labels` | Show detailed labels on output image | `False` |
 | `--show-court-labels` | Show court numbers on output image | `False` |
 | `--device` | Device to use for inference (`cpu` or `cuda`) | auto-detect |
 | `--disable-ssl-verify` | Disable SSL verification for downloads | `False` |
+| `--extra-verbose` | Show detailed detection information | `False` |
 
 ### Example Commands
 
-#### Process a single image with default settings
+#### Process a single image with YOLOv8x (recommended)
 ```bash
-python main.py
+python main.py --model yolov8x
 ```
 
 #### Process a specific image with custom output path
 ```bash
-python main.py --input my_courts.png --output results.png
+python main.py --input my_courts.png --output results.png --model yolov8x
 ```
 
 #### Enable debug mode for additional visualization outputs
@@ -159,60 +159,48 @@ python main.py --input my_courts.png --output results.png
 python main.py --debug
 ```
 
-#### Generate clean output without detailed labels
-```bash
-python main.py  # Labels are hidden by default
-```
-
 #### Show detailed labels on the output image
 ```bash
 python main.py --show-labels
-```
-
-#### Show court numbers on the output image
-```bash
-python main.py --show-court-labels
-```
-
-#### Force CPU usage even if CUDA is available
-```bash
-python main.py --device cpu
 ```
 
 ## Troubleshooting
 
 ### Common Issues and Solutions
 
+#### YOLOv8 Installation Issues
+If you're having trouble with YOLOv8 models:
+```bash
+python install_ultralytics.py
+```
+This will install the ultralytics package needed for YOLOv8 models.
+
 #### Module Not Found Errors
 If you encounter "No module named X" errors:
+```bash
+pip install -r requirements.txt
+```
 
-- For standard systems:
-  ```bash
-  pip install -r requirements.txt
-  ```
-
-- For Raspberry Pi:
-  ```bash
-  bash install_dependencies_raspi.sh
-  ```
-  
-  Or install specific modules:
-  ```bash
-  sudo apt update && sudo apt install -y python3-opencv python3-numpy python3-shapely python3-pip
-  pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-  ```
-
-#### YOLOv5 Model Missing
+#### YOLOv5/YOLOv8 Model Missing
 If you get a model missing error:
 ```bash
+# For YOLOv5
 mkdir -p models
 curl -L https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -o models/yolov5s.pt
+
+# For YOLOv8 
+mkdir -p models
+curl -L https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8x.pt -o models/yolov8x.pt
 ```
 
 #### CUDA / Memory Errors
 If you encounter CUDA out-of-memory errors:
 ```bash
 python main.py --device cpu
+```
+Or try a smaller model:
+```bash
+python main.py --model yolov8s  # or yolov8n for even smaller
 ```
 
 #### SSL Certificate Errors
@@ -223,28 +211,37 @@ python main.py --disable-ssl-verify
 
 ### Court Detection Issues
 
-- **Sky detected as courts**: Ensure the green threshold check is working properly
-- **Courts not detected**: Adjust HSV ranges in `Config.COURT_COLORS` to match your court colors
-- **Courts merged together**: The green areas between courts should be properly detected
+- **Sky detected as courts**: Adjust the green threshold check
+- **Courts not detected**: Modify HSV ranges in `Config.COURT_COLORS` to match your court colors
+- **Courts merged together**: Make sure the green areas between courts are visible
 
 ### People Detection Issues
 
-- **Missing detections**: Lower detection threshold or check YOLOv5 model setup
+- **Missing detections**: Lower detection threshold by using `--model yolov8x` which has better detection capabilities
 - **Wrong position classification**: Use `--debug` to check color masks
 
-## License
+## Supported YOLO Models
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+The system supports multiple YOLO models with different performance characteristics:
 
----
+| Model | Size | Speed | Accuracy | Memory Usage |
+|-------|------|-------|----------|-------------|
+| yolov5n | 6.6MB | Very Fast | Low | Very Low |
+| yolov5s | 14.3MB | Fast | Medium | Low |
+| yolov5m | 42.6MB | Medium | Good | Medium |
+| yolov5l | 92.8MB | Slow | Better | High |
+| yolov5x | 174.5MB | Very Slow | Best | Very High |
+| yolov8n | 6.3MB | Very Fast | Medium | Very Low |
+| yolov8s | 22.5MB | Fast | Good | Low |
+| yolov8m | 52.0MB | Medium | Very Good | Medium |
+| yolov8l | 86.5MB | Slow | Excellent | High |
+| yolov8x | 136.5MB | Very Slow | Superior | Very High |
 
-<div align="center">
-  <p>Made with love for tennis enthusiasts</p>
-</div>
+For most applications, `yolov8x` offers the best detection results, while `yolov5s` is a good compromise for slower devices.
 
 ## Debug Mode
 
-When running with the `--debug` flag, the system generates visualizations in the `images/debug/` directory to help understand the detection process:
+When running with the `--debug` flag, the system generates visualizations in the `images/debug/` directory:
 
 - **blue_mask_raw.png**: Raw blue court area detection
 - **green_mask.png**: Green out-of-bounds area detection
@@ -253,14 +250,14 @@ When running with the `--debug` flag, the system generates visualizations in the
 - **foot_positions_debug.png**: Debug visualization of detected people's positions
 - **color_masks.png**: Combined visualization of all color masks
 
-These visualizations are invaluable for troubleshooting detection issues and understanding the internal workings of the system.
+These visualizations are invaluable for troubleshooting detection issues.
 
-## Model Requirements
+## License
 
-The system uses YOLOv5s by default for people detection. The model is automatically downloaded during installation but requires the following:
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-- **Model File**: `models/yolov5s.pt` (14MB)
-- **Minimum RAM**: 2GB recommended
-- **GPU**: Optional but recommended for faster processing
+---
 
-You can switch to smaller models like YOLOv5n for resource-constrained devices by modifying the `Config.Model.NAME` setting in the code.
+<div align="center">
+  <p>Made with ❤️ for tennis enthusiasts</p>
+</div>
