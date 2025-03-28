@@ -109,7 +109,7 @@ class Config:
         SHOW_TIMESTAMP = True        # Show timestamps in output
         SUPER_QUIET = False          # Super quiet mode (almost no output)
         SUMMARY_ONLY = False         # Only show summary of results
-        EXTRA_VERBOSE = True         # Show extra detailed output for Raspberry Pi
+        EXTRA_VERBOSE = False         # Show extra detailed output for Raspberry Pi
         
         # ANSI color codes for terminal output
         COLORS = {
