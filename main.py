@@ -17,6 +17,23 @@ from datetime import datetime
 from contextlib import redirect_stdout, redirect_stderr
 import contextlib
 import threading
+from multiprocessing import cpu_count, Pool
+from functools import partial
+import urllib.request
+
+# Global variables
+args = None  # Will store command-line arguments
+
+# Fix macOS SSL certificate issues
+if sys.platform == 'darwin':
+    # Check if we're running on macOS and set default SSL context
+    try:
+        # Try to import certifi for better certificate handling
+        import certifi # type: ignore
+        ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        # If certifi isn't available, try the default macOS certificate location
+        ssl._create_default_https_context = lambda: ssl.create_default_context()
 
 # === CONFIGURATION SETTINGS ===
 class Config:
@@ -78,6 +95,7 @@ class Config:
         SHOW_TIMESTAMP = True        # Show timestamps in output
         SUPER_QUIET = False          # Super quiet mode (almost no output)
         SUMMARY_ONLY = False         # Only show summary of results
+        EXTRA_VERBOSE = True         # Show extra detailed output for Raspberry Pi
         
         # ANSI color codes for terminal output
         COLORS = {
@@ -115,10 +133,48 @@ class Config:
     
     # Model settings
     class Model:
-        NAME = "yolov5s"             # YOLOv5 model size (yolov5s, yolov5m, yolov5l, etc.)
+        NAME = "yolov8x"             # YOLOv5 model size (yolov5s, yolov5m, yolov5l, etc.)
         CONFIDENCE = 0.3             # Detection confidence threshold
         IOU = 0.45                   # IoU threshold
         CLASSES = [0]                # Only detect people (class 0)
+        
+        # YOLOv5 model URLs - add more as needed
+        MODEL_URLS = {
+            "yolov5n": "https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5n.pt",
+            "yolov5s": "https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt",
+            "yolov5m": "https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5m.pt",
+            "yolov5l": "https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5l.pt",
+            "yolov5x": "https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5x.pt",
+            # YOLOv6 models
+            "yolov6n": "https://github.com/meituan/YOLOv6/releases/download/0.2.0/yolov6n.pt",
+            "yolov6s": "https://github.com/meituan/YOLOv6/releases/download/0.2.0/yolov6s.pt",
+            "yolov6m": "https://github.com/meituan/YOLOv6/releases/download/0.2.0/yolov6m.pt",
+            "yolov6l": "https://github.com/meituan/YOLOv6/releases/download/0.2.0/yolov6l.pt",
+            # YOLOv7 models
+            "yolov7": "https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7.pt",
+            "yolov7-tiny": "https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7-tiny.pt",
+            "yolov7x": "https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7x.pt",
+            # YOLOv8 models
+            "yolov8n": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt",
+            "yolov8s": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8s.pt",
+            "yolov8m": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8m.pt",
+            "yolov8l": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8l.pt",
+            "yolov8x": "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8x.pt",
+        }
+        
+        @classmethod
+        def get_model_url(cls, model_name):
+            # Default to yolov5s if model not found
+            if model_name.lower() not in cls.MODEL_URLS:
+                OutputManager.log(f"Model {model_name} not found in known models. Defaulting to yolov5s.", "WARNING")
+                return cls.MODEL_URLS["yolov5s"]
+            return cls.MODEL_URLS[model_name.lower()]
+    
+    # Multiprocessing settings
+    class MultiProcessing:
+        ENABLED = True              # Enable multiprocessing
+        NUM_PROCESSES = 3           # Number of CPU cores to use
+        CHUNK_SIZE = 10             # Chunk size for processing
 
 class OutputManager:
     """
@@ -144,6 +200,7 @@ class OutputManager:
         "ERROR": "✗",
         "DEBUG": "•",
         "FATAL": "☠",
+        "STATUS": "→",
     }
     
     # Track messages for summary
@@ -184,7 +241,7 @@ class OutputManager:
     def log(cls, message, level="INFO"):
         """Print formatted log messages with consistent, clean formatting"""
         # In super quiet mode, only show errors and success messages
-        if Config.Output.SUPER_QUIET and level not in ["ERROR", "SUCCESS", "FATAL"]:
+        if Config.Output.SUPER_QUIET and level not in ["ERROR", "SUCCESS", "FATAL", "STATUS"]:
             return
             
         if not Config.Output.VERBOSE and level == "DEBUG":
@@ -216,6 +273,8 @@ class OutputManager:
                 color = cls.RED
             elif level == "DEBUG":
                 color = cls.GRAY
+            elif level == "STATUS":
+                color = cls.CYAN
         
         # Format timestamp with consistent width
         timestamp = ""
@@ -230,6 +289,14 @@ class OutputManager:
         
         # Print the message
         print(formatted_message)
+        
+        # Flush stdout to ensure immediate display on Raspberry Pi
+        sys.stdout.flush()
+    
+    @classmethod
+    def status(cls, message):
+        """Log a status update message - replacement for animations"""
+        cls.log(message, "STATUS")
     
     @classmethod
     def _run_animation_thread(cls, animate_func):
@@ -520,8 +587,12 @@ class OutputManager:
         
         # Quick commands for common problems
         for error in cls.errors:
+            # YOLOv8 specific errors
+            if "'list' object has no attribute 'pandas'" in error or "'boxes'" in error or "YOLOv8 result format error" in error:
+                messages.append("YOLOv8 compatibility error\nYou're using a YOLOv8 model but the script encountered format issues. Try:\n1. Run with a YOLOv5 model: python main.py --model yolov5s\n2. Or install ultralytics package: pip install ultralytics")
+            
             # Module not found errors
-            if "ModuleNotFoundError" in error or "No module named" in error:
+            elif "ModuleNotFoundError" in error or "No module named" in error:
                 module_name = error.split("'")[1] if "'" in error else "unknown"
                 if module_name == "cv2":
                     messages.append(f"Missing OpenCV: {module_name}\nRun: pip install opencv-python")
@@ -531,6 +602,8 @@ class OutputManager:
                     messages.append(f"Missing NumPy: {module_name}\nRun: pip install numpy")
                 elif module_name == "shapely":
                     messages.append(f"Missing Shapely: {module_name}\nRun: pip install shapely")
+                elif module_name == "ultralytics" and "yolov8" in error.lower():
+                    messages.append(f"Missing Ultralytics package needed for YOLOv8\nRun: pip install ultralytics\nOr use YOLOv5 model: python main.py --model yolov5s")
                 else:
                     messages.append(f"Missing module: {module_name}\nRun: pip install {module_name}\nOr: pip install -r requirements.txt")
                 
@@ -550,12 +623,18 @@ class OutputManager:
                 else:
                     messages.append("OpenCV error detected\nRun: pip install opencv-python")
                 
-            # YOLOv5 model errors
+            # YOLOv5/YOLOv8 model errors
             elif "model" in error.lower() and ("yolo" in error.lower() or "not found" in error.lower()):
                 if "models directory" in error.lower():
                     messages.append(f"Models directory not found\nRun: mkdir -p models")
+                elif "yolov8" in error.lower():
+                    messages.append(f"YOLOv8 model not found or error\n1. Try YOLOv5 instead: python main.py --model yolov5s\n2. Install ultralytics: pip install ultralytics\n3. Or manually download YOLOv8: mkdir -p models && wget -q https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8s.pt -O models/yolov8s.pt")
                 else:
-                    messages.append(f"YOLOv5 model not found\nRun: mkdir -p models && wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O models/yolov5s.pt")
+                    messages.append(f"YOLO model not found\nRun: mkdir -p models && wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O models/yolov5s.pt")
+            
+            # macOS SSL Certificate errors
+            elif "ssl" in error.lower() and "certificate" in error.lower() and ("darwin" in error.lower() or "macos" in error.lower()):
+                messages.append("macOS SSL Certificate verification issue\nRunning one of these commands should fix it:\n1. Run with: python main.py --disable-ssl-verify\n2. Run with: python main.py --force-macos-cert-install\n3. Or manually install certificates by running /Applications/Python 3.x/Install Certificates.command")
                 
             # Permission errors
             elif any(word in error.lower() for word in ["permission", "access", "denied"]):
@@ -584,7 +663,7 @@ class OutputManager:
             
             # Internet connection errors during YOLOv5 download
             elif any(word in error.lower() for word in ["connection", "timeout", "network", "internet", "download"]):
-                messages.append("Network error detected\nCheck your internet connection and try again\nIf downloading YOLOv5 model fails, manually download from: https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt\nThen place it in the models/ directory")
+                messages.append("Network error detected\nCheck your internet connection and try again\nIf downloading YOLO model fails, manually download from: https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt\nThen place it in the models/ directory")
             
             # Memory errors
             elif "memory" in error.lower():
@@ -592,7 +671,10 @@ class OutputManager:
                 
             # SSL errors
             elif "ssl" in error.lower():
-                messages.append("SSL error detected when downloading model\nTry: pip install certifi --upgrade\nOr: Run with --disable-ssl-verify flag")
+                if sys.platform == "darwin":  # macOS
+                    messages.append("SSL error detected on macOS\nTry: python main.py --force-macos-cert-install\nOr: python main.py --disable-ssl-verify")
+                else:
+                    messages.append("SSL error detected when downloading model\nTry: pip install certifi --upgrade\nOr: Run with --disable-ssl-verify flag")
                 
             # Disk space errors
             elif any(word in error.lower() for word in ["disk", "space", "storage", "write"]):
@@ -600,7 +682,7 @@ class OutputManager:
                
             # For any other errors, give a more detailed message
             else:
-                messages.append(f"Error: {error}\n\nGeneral troubleshooting:\n1. Ensure all dependencies are installed: pip install -r requirements.txt\n2. Check for proper YOLOv5 model: models/yolov5s.pt\n3. Verify input image exists and is readable\n4. Try running with --debug flag for more information")
+                messages.append(f"Error: {error}\n\nGeneral troubleshooting:\n1. Ensure all dependencies are installed: pip install -r requirements.txt\n2. Check for proper YOLO model: models/yolov5s.pt\n3. Verify input image exists and is readable\n4. Try running with --debug flag for more information")
         
         # Create a direct message with commands
         if len(messages) == 1:
@@ -686,16 +768,190 @@ def is_sky_region(contour, image_height, image_width):
     # Check if the contour is likely to be sky
     return is_at_top and (is_wide or is_short)
 
+def process_court_contour(contour, blue_mask, green_mask, height, width):
+    """Process a single court contour - designed for multiprocessing"""
+    area = cv2.contourArea(contour)
+    # Filter by minimum area to avoid noise
+    if area < Config.Court.MIN_AREA:
+        return None
+        
+    # Get bounding box for aspect ratio check
+    x, y, w, h = cv2.boundingRect(contour)
+    
+    # Create slightly dilated mask for this blue region to check if it's next to green
+    region_mask = np.zeros((height, width), dtype=np.uint8)
+    cv2.drawContours(region_mask, [contour], -1, 255, -1)
+    
+    # Dilate the region mask slightly to check for adjacent green pixels
+    kernel = np.ones((15, 15), np.uint8)
+    dilated_region = cv2.dilate(region_mask, kernel, iterations=1)
+    
+    # Check if there's green adjacent to this blue region
+    green_nearby = cv2.bitwise_and(green_mask, dilated_region)
+    green_nearby_pixels = cv2.countNonZero(green_nearby)
+    
+    # If there's no green nearby, it's not a court
+    if green_nearby_pixels < 100:  # Threshold for minimum green pixels needed
+        return None
+    
+    # Get the blue area itself
+    blue_area = cv2.bitwise_and(blue_mask, region_mask)
+    blue_pixels = cv2.countNonZero(blue_area)
+    
+    # Get convex hull for better shape
+    hull = cv2.convexHull(contour)
+    
+    # Approximate polygon
+    perimeter = cv2.arcLength(hull, True)
+    approx = cv2.approxPolyDP(hull, 0.02 * perimeter, True)
+    
+    # Calculate centroid
+    M = cv2.moments(contour)
+    if M["m00"] != 0:
+        cx = int(M["m10"] / M["m00"])
+        cy = int(M["m01"] / M["m00"])
+    else:
+        cx, cy = x + w//2, y + h//2
+    
+    # Save court info with all required keys
+    court_info = {
+        'contour': contour,
+        'approx': approx,
+        'hull': hull,
+        'area': area,
+        'blue_ratio': 1.0,  # This is a blue region, so ratio is 1
+        'green_ratio': green_nearby_pixels / area,
+        'blue_mask': blue_area,
+        'green_mask': green_nearby,
+        'blue_pixels': blue_pixels,
+        'green_pixels': green_nearby_pixels,
+        'centroid': (cx, cy),
+        'bbox': (x, y, w, h)
+    }
+    
+    return court_info
+
+def check_person_on_court(person_data):
+    """
+    Process a single person to determine court position - designed for multiprocessing
+    person_data: tuple of (person, courts)
+    Returns: (court_index, area_type)
+    """
+    person, courts = person_data
+    
+    # Get the bounding box coordinates
+    x1, y1, x2, y2 = person['bbox']
+    
+    # Calculate the bottom half of the bounding box
+    bottom_y1 = y1 + (y2 - y1) // 2  # Start from middle of box
+    bottom_y2 = y2  # End at bottom of box
+    
+    # Create points for the bottom half of the bounding box
+    bottom_points = [
+        Point(x1, bottom_y1),
+        Point(x2, bottom_y1),
+        Point(x2, bottom_y2),
+        Point(x1, bottom_y2)
+    ]
+    
+    # Check each court
+    for court_idx, court in enumerate(courts):
+        # Get the court polygon
+        approx = court['approx']
+        points = approx.reshape(-1, 2)
+        court_polygon = Polygon(points)
+        
+        # Check if any of the bottom points are inside the court
+        for point in bottom_points:
+            if court_polygon.contains(point):
+                # Person is on this court - now determine if they're on blue (in-bounds) or green (out-bounds)
+                x, y = int(point.x), int(point.y)
+                
+                # Check if the point is on blue area (in-bounds)
+                blue_mask = court['blue_mask']
+                if y < blue_mask.shape[0] and x < blue_mask.shape[1] and blue_mask[y, x] > 0:
+                    return court_idx, 'in_bounds'
+                
+                # Check if the point is on green area (out-bounds)
+                green_mask = court['green_mask']
+                if y < green_mask.shape[0] and x < green_mask.shape[1] and green_mask[y, x] > 0:
+                    return court_idx, 'out_bounds'
+                
+                # If not specifically on blue or green, consider it in-bounds if the court has more blue than green
+                if court['blue_ratio'] > court['green_ratio']:
+                    return court_idx, 'in_bounds'
+                else:
+                    return court_idx, 'out_bounds'
+    
+    # If we reached here, the person is not on any court
+    return -1, 'off_court'
+
+def process_courts_parallel(blue_contours, blue_mask, green_mask, height, width):
+    """Process court contours in parallel using multiprocessing"""
+    if not Config.MultiProcessing.ENABLED or len(blue_contours) <= 5:
+        # For few contours, sequential processing is faster
+        courts = []
+        for contour in blue_contours:
+            court_info = process_court_contour(contour, blue_mask, green_mask, height, width)
+            if court_info:
+                courts.append(court_info)
+                OutputManager.log(f"Court {len(courts)} accepted: Area={court_info['area']:.1f}, Green nearby pixels={court_info['green_pixels']}", "SUCCESS")
+        return courts
+    
+    # For many contours, use multiprocessing
+    OutputManager.log(f"Processing {len(blue_contours)} potential courts with {Config.MultiProcessing.NUM_PROCESSES} processes", "INFO")
+    
+    # Create a partial function with fixed arguments
+    process_func = partial(process_court_contour, blue_mask=blue_mask, green_mask=green_mask, 
+                          height=height, width=width)
+    
+    # Create a pool and process contours in parallel
+    with Pool(processes=Config.MultiProcessing.NUM_PROCESSES) as pool:
+        results = pool.map(process_func, blue_contours)
+    
+    # Filter None results and collect valid courts
+    courts = [court for court in results if court is not None]
+    
+    # Log the results
+    for i, court in enumerate(courts):
+        OutputManager.log(f"Court {i+1} accepted: Area={court['area']:.1f}, Green nearby pixels={court['green_pixels']}", "SUCCESS")
+    
+    return courts
+
+def analyze_people_positions_parallel(people, courts):
+    """Analyze positions of people on courts using multiprocessing"""
+    if not Config.MultiProcessing.ENABLED or len(people) <= 5:
+        # For few people, sequential processing is faster
+        people_locations = []
+        for person in people:
+            court_idx, area_type = is_person_on_court(person, courts)
+            people_locations.append((court_idx, area_type))
+        return people_locations
+    
+    # For many people, use multiprocessing
+    OutputManager.log(f"Analyzing positions of {len(people)} people with {Config.MultiProcessing.NUM_PROCESSES} processes", "INFO")
+    
+    # Create input data for the pool
+    input_data = [(person, courts) for person in people]
+    
+    # Create a pool and process positions in parallel
+    with Pool(processes=Config.MultiProcessing.NUM_PROCESSES) as pool:
+        people_locations = pool.map(check_person_on_court, input_data)
+    
+    return people_locations
+
 def detect_tennis_court(image, debug_folder=None):
     """
     Detect tennis courts in an image using color masking and contour analysis.
     Simplified approach: Every blue area next to green is a court.
     Returns list of tennis court contours.
+    
+    Optimized for Raspberry Pi Zero with multiprocessing support.
     """
     height, width = image.shape[:2]
     
     # Create masks
-    OutputManager.log("Creating blue and green masks...", "DEBUG")
+    OutputManager.status("Creating blue and green masks...")
     blue_mask = create_blue_mask(image)
     green_mask = create_green_mask(image)
     
@@ -705,75 +961,11 @@ def detect_tennis_court(image, debug_folder=None):
         cv2.imwrite(os.path.join(debug_folder, "green_mask_raw.png"), green_mask)
     
     # Find blue contours (potential courts)
-    OutputManager.log("Analyzing potential court shapes...", "DEBUG")
+    OutputManager.status("Analyzing potential court shapes...")
     blue_contours, _ = cv2.findContours(blue_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    # Process each blue contour as a potential court
-    valid_courts = []
-    
-    for contour in blue_contours:
-        area = cv2.contourArea(contour)
-        # Filter by minimum area to avoid noise
-        if area < Config.Court.MIN_AREA:
-            continue
-            
-        # Get bounding box for aspect ratio check
-        x, y, w, h = cv2.boundingRect(contour)
-        
-        # Create slightly dilated mask for this blue region to check if it's next to green
-        region_mask = np.zeros((height, width), dtype=np.uint8)
-        cv2.drawContours(region_mask, [contour], -1, 255, -1)
-        
-        # Dilate the region mask slightly to check for adjacent green pixels
-        kernel = np.ones((15, 15), np.uint8)
-        dilated_region = cv2.dilate(region_mask, kernel, iterations=1)
-        
-        # Check if there's green adjacent to this blue region
-        green_nearby = cv2.bitwise_and(green_mask, dilated_region)
-        green_nearby_pixels = cv2.countNonZero(green_nearby)
-        
-        # If there's no green nearby, it's not a court
-        if green_nearby_pixels < 100:  # Threshold for minimum green pixels needed
-            OutputManager.log(f"Rejecting blue area: no green nearby", "DEBUG")
-            continue
-        
-        # Get the blue area itself
-        blue_area = cv2.bitwise_and(blue_mask, region_mask)
-        blue_pixels = cv2.countNonZero(blue_area)
-        
-        # Get convex hull for better shape
-        hull = cv2.convexHull(contour)
-        
-        # Approximate polygon
-        perimeter = cv2.arcLength(hull, True)
-        approx = cv2.approxPolyDP(hull, 0.02 * perimeter, True)
-        
-        # Calculate centroid
-        M = cv2.moments(contour)
-        if M["m00"] != 0:
-            cx = int(M["m10"] / M["m00"])
-            cy = int(M["m01"] / M["m00"])
-        else:
-            cx, cy = x + w//2, y + h//2
-        
-        # Save court info with all required keys
-        court_info = {
-            'contour': contour,
-            'approx': approx,
-            'hull': hull,
-            'area': area,
-            'blue_ratio': 1.0,  # This is a blue region, so ratio is 1
-            'green_ratio': green_nearby_pixels / area,
-            'blue_mask': blue_area,
-            'green_mask': green_nearby,
-            'blue_pixels': blue_pixels,
-            'green_pixels': green_nearby_pixels,
-            'centroid': (cx, cy),
-            'bbox': (x, y, w, h)
-        }
-        
-        valid_courts.append(court_info)
-        OutputManager.log(f"Court {len(valid_courts)} accepted: Area={area:.1f}, Green nearby pixels={green_nearby_pixels}", "SUCCESS")
+    # Process contours in parallel
+    valid_courts = process_courts_parallel(blue_contours, blue_mask, green_mask, height, width)
     
     # Save debug visualizations
     if debug_folder and Config.Output.VERBOSE:
@@ -933,12 +1125,21 @@ def assign_court_numbers(blue_mask_connected):
     return court_mask, courts
 
 def main():
-    """Main function"""
+    """Main function optimized for Raspberry Pi Zero"""
     # Start timer
     start_time = time.time()
     
     # Reset any previously tracked logs
     OutputManager.reset_logs()
+    
+    # Initialize multiprocessing if enabled
+    if Config.MultiProcessing.ENABLED:
+        # Set the number of processes if not already set
+        if Config.MultiProcessing.NUM_PROCESSES <= 0:
+            # Use 3 processes or the number of CPU cores if less than 3
+            Config.MultiProcessing.NUM_PROCESSES = min(3, cpu_count())
+        
+        OutputManager.log(f"Multiprocessing enabled with {Config.MultiProcessing.NUM_PROCESSES} processes", "INFO")
     
     try:
         # Load image
@@ -953,14 +1154,15 @@ def main():
                 except Exception as e:
                     OutputManager.log(f"Cannot create images directory: {str(e)}", "ERROR")
             
-            # Start animation for loading the image
-            OutputManager.animate("Loading image")
+            # Load the image
+            OutputManager.status("Loading image")
             image = cv2.imread(input_path)
             
-            # Stop animation and show result
-            OutputManager.stop_animation()
+            # Check image loaded successfully
             if image is not None:
-                OutputManager.log("Image loaded successfully", "SUCCESS")
+                OutputManager.log(f"Image loaded successfully: {image.shape[1]}x{image.shape[0]} pixels", "SUCCESS")
+                if Config.Output.EXTRA_VERBOSE:
+                    OutputManager.log(f"Image type: {image.dtype}, channels: {image.shape[2]}", "INFO")
             else:
                 OutputManager.log(f"Unable to open the image at {input_path}", "ERROR")
                 # Show final summary with error and exit
@@ -975,7 +1177,6 @@ def main():
                 print_error_summary(final_summary)
                 return 1
         except Exception as e:
-            OutputManager.stop_animation()
             OutputManager.log(f"Problem loading the image: {str(e)}", "ERROR")
             processing_time = time.time() - start_time
             final_summary = OutputManager.create_final_summary(
@@ -992,6 +1193,7 @@ def main():
         try:
             debug_folder = Config.Paths.debug_dir()
             os.makedirs(debug_folder, exist_ok=True)
+            OutputManager.log(f"Debug folder created at {debug_folder}", "DEBUG")
         except Exception as e:
             OutputManager.log(f"Can't create debug folder: {str(e)}", "WARNING")
             debug_folder = None  # Set to None to prevent further debug saves
@@ -999,11 +1201,12 @@ def main():
         
         # Detect tennis courts
         try:
-            OutputManager.animate("Analyzing court colors")
+            OutputManager.status("Analyzing court colors")
             blue_mask = create_blue_mask(image)
             green_mask = create_green_mask(image)
-            OutputManager.stop_animation()
             OutputManager.log("Court colors analyzed", "SUCCESS")
+            if Config.Output.EXTRA_VERBOSE:
+                OutputManager.log(f"Blue mask: {np.count_nonzero(blue_mask)} pixels, Green mask: {np.count_nonzero(green_mask)} pixels", "INFO")
             
             # Process the raw blue mask to avoid connecting unrelated areas like the sky
             blue_mask_raw = blue_mask.copy()
@@ -1015,11 +1218,14 @@ def main():
             court_mask[green_mask > 0] = 0     # Green areas override blue
             
             # Filter out blue regions that don't have any green nearby (like sky)
-            OutputManager.animate("Processing court regions")
+            OutputManager.status("Processing court regions")
             num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(blue_mask_raw, connectivity=8)
+            OutputManager.log(f"Found {num_labels-1} connected blue regions", "INFO")
             
             # For each blue region, check if there's green nearby
             filtered_court_mask = np.zeros_like(court_mask)
+            valid_regions = 0
+            
             for i in range(1, num_labels):
                 region = (labels == i).astype(np.uint8)
                 area = stats[i, cv2.CC_STAT_AREA]
@@ -1040,14 +1246,15 @@ def main():
                 if green_nearby_pixels > 30:  # Reduced from 50 to be more lenient
                     # This is likely a court (not sky) - keep it
                     filtered_court_mask[region > 0] = court_mask[region > 0]
+                    valid_regions += 1
+                    if Config.Output.EXTRA_VERBOSE:
+                        OutputManager.log(f"Region {i}: area={area}, green nearby={green_nearby_pixels} - likely court", "DEBUG")
             
-            OutputManager.stop_animation()
-            OutputManager.log("Court regions processed", "SUCCESS")
+            OutputManager.log(f"Court regions processed: {valid_regions} valid regions found", "SUCCESS")
             
             # Use the filtered court mask for further processing
             court_mask = filtered_court_mask
         except Exception as e:
-            OutputManager.stop_animation()
             OutputManager.log(f"Error processing court colors: {str(e)}", "ERROR")
             # Continue with blank masks as a fallback
             height, width = image.shape[:2]
@@ -1061,6 +1268,7 @@ def main():
                 cv2.imwrite(os.path.join(debug_folder, "blue_mask_raw.png"), blue_mask_raw)
                 cv2.imwrite(os.path.join(debug_folder, "green_mask.png"), green_mask)
                 cv2.imwrite(os.path.join(debug_folder, "filtered_court_mask.png"), court_mask * 255)
+                OutputManager.log("Debug masks saved", "DEBUG")
             except Exception as e:
                 OutputManager.log(f"Couldn't save debug masks: {str(e)}", "WARNING")
         
@@ -1080,17 +1288,21 @@ def main():
         
         # Assign court numbers to each separate blue region
         try:
-            OutputManager.animate("Identifying courts")
+            OutputManager.status("Identifying courts")
             court_numbers_mask, courts = assign_court_numbers(court_mask)
-            OutputManager.stop_animation()
             
             # Output appropriate message based on court detection
             if len(courts) == 0:
                 OutputManager.log("No tennis courts found in the image", "WARNING")
             else:
                 OutputManager.log(f"Found {len(courts)} tennis court{'s' if len(courts) > 1 else ''}", "SUCCESS")
+                if Config.Output.EXTRA_VERBOSE:
+                    # Log details of each court
+                    for i, court in enumerate(courts):
+                        cx, cy = court['centroid']
+                        area = court['area']
+                        OutputManager.log(f"Court {i+1}: center=({cx}, {cy}), area={area:.1f} pixels", "DEBUG")
         except Exception as e:
-            OutputManager.stop_animation()
             OutputManager.log(f"Error identifying courts: {str(e)}", "ERROR")
             # Create fallback empty data
             courts = []
@@ -1125,7 +1337,7 @@ def main():
                 cv2.addWeighted(court_viz, 1, court_area, 0.7, 0, court_viz)
                 
                 # Draw court number at center only if enabled in debug visualizations too
-                if Config.Visual.SHOW_COURT_LABELS:
+                if hasattr(Config.Visual, 'SHOW_COURT_LABELS') and Config.Visual.SHOW_COURT_LABELS:
                     cx, cy = int(court['centroid'][0]), int(court['centroid'][1])
                     cv2.putText(court_viz, f"Court {court_id}", (cx-40, cy), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
@@ -1137,6 +1349,7 @@ def main():
         if debug_folder:
             try:
                 cv2.imwrite(os.path.join(debug_folder, "courts_numbered.png"), court_viz)
+                OutputManager.log("Court visualization saved", "DEBUG")
             except Exception as e:
                 OutputManager.log(f"Couldn't save court visualization: {str(e)}", "WARNING")
         
@@ -1153,7 +1366,7 @@ def main():
         # Detect people
         people = []
         try:
-            OutputManager.animate("Looking for people")
+            OutputManager.status("Looking for people")
             
             # Check if models directory exists
             models_dir = Config.Paths.MODELS_DIR
@@ -1164,19 +1377,66 @@ def main():
                 except Exception as e:
                     OutputManager.log(f"Cannot create models directory: {str(e)}", "ERROR")
             
-            # Check if model file exists
-            yolov5_path = os.path.join(models_dir, f'{Config.Model.NAME}.pt')
-            if not os.path.exists(yolov5_path):
-                OutputManager.log(f"YOLOv5 model not found at {yolov5_path}", "ERROR")
-                raise FileNotFoundError(f"Model file not found. Download with: wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O {yolov5_path}")
+            # Get the model name from config and download if needed
+            model_name = Config.Model.NAME
+            OutputManager.log(f"Using model: {model_name}", "INFO")
+            
+            # Check if SSL verification should be disabled
+            disable_ssl = False
+            if hasattr(args, 'disable_ssl_verify') and args.disable_ssl_verify:
+                disable_ssl = True
+            
+            try:
+                # Download model if it doesn't exist (new function)
+                model_path = download_yolo_model(
+                    model_name, 
+                    url=Config.Model.get_model_url(model_name),
+                    disable_ssl_verify=disable_ssl
+                )
+            except Exception as e:
+                # If YOLOv8 model fails, try YOLOv5s as fallback
+                if model_name != "yolov5s":
+                    OutputManager.log(f"Falling back to YOLOv5s model after error with {model_name}", "WARNING")
+                    try:
+                        model_path = download_yolo_model(
+                            "yolov5s", 
+                            url=Config.Model.get_model_url("yolov5s"),
+                            disable_ssl_verify=True  # Force disable SSL for fallback
+                        )
+                    except Exception as e2:
+                        raise Exception(f"Failed to download fallback model: {str(e2)}")
+                else:
+                    raise e
             
             # Load the YOLO model with better error handling
             try:
                 with suppress_stdout_stderr():
-                    model = torch.hub.load('ultralytics/yolov5', 'custom', path=yolov5_path, verbose=False)
-                    model.conf = Config.Model.CONFIDENCE
-                    model.iou = Config.Model.IOU
-                    model.classes = Config.Model.CLASSES
+                    OutputManager.status(f"Loading {model_name} model")
+                    
+                    # Determine if this is YOLOv5 or YOLOv8
+                    is_yolov8 = model_name.startswith("yolov8")
+                    
+                    if is_yolov8:
+                        try:
+                            # Try to import ultralytics
+                            from ultralytics import YOLO # type: ignore
+                            model = YOLO(model_path)
+                            OutputManager.log(f"{model_name} model loaded with Ultralytics API", "SUCCESS")
+                        except ImportError:
+                            # Fallback to YOLOv5 hub if ultralytics not installed
+                            OutputManager.log("Ultralytics not installed, falling back to YOLOv5 hub", "WARNING")
+                            model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path, verbose=False)
+                    else:
+                        # Use YOLOv5 hub for loading
+                        model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path, verbose=False)
+                    
+                    # Set confidence and IoU thresholds
+                    if not is_yolov8 or not isinstance(model, type(lambda: None)):  # Check if not a callable (ultralytics YOLO object)
+                        model.conf = Config.Model.CONFIDENCE
+                        model.iou = Config.Model.IOU
+                        model.classes = Config.Model.CLASSES
+                    
+                    OutputManager.log(f"{model_name} model loaded successfully", "SUCCESS")
             except Exception as e:
                 # Handle SSL certificate errors
                 if "ssl" in str(e).lower():
@@ -1184,7 +1444,7 @@ def main():
                     # Try again with SSL verification disabled
                     ssl._create_default_https_context = ssl._create_unverified_context
                     with suppress_stdout_stderr():
-                        model = torch.hub.load('ultralytics/yolov5', 'custom', path=yolov5_path, verbose=False)
+                        model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path, verbose=False, force_reload=True)
                         model.conf = Config.Model.CONFIDENCE
                         model.iou = Config.Model.IOU
                         model.classes = Config.Model.CLASSES
@@ -1192,46 +1452,131 @@ def main():
                     raise e
             
             # Run detection
+            OutputManager.status("Running person detection with YOLOv5")
             with suppress_stdout_stderr():
                 try:
+                    # Force CPU device on Raspberry Pi Zero
+                    model.cpu()
+                    OutputManager.log("Using CPU for inference (optimized for Raspberry Pi)", "INFO")
                     results = model(image)
                 except RuntimeError as e:
-                    # Check for CUDA out of memory error
-                    if "CUDA out of memory" in str(e):
-                        OutputManager.log("CUDA out of memory, trying with CPU", "WARNING")
-                        # Try again with CPU
-                        model.cpu()
-                        results = model(image)
+                    # Check for memory errors
+                    if "out of memory" in str(e).lower():
+                        OutputManager.log("Memory error, trying with smaller image", "WARNING")
+                        # Try scaling the image down
+                        scale_factor = 0.5  # Scale to 50%
+                        small_img = cv2.resize(image, (0, 0), fx=scale_factor, fy=scale_factor)
+                        results = model(small_img)
+                        OutputManager.log(f"Used scaled image ({small_img.shape[1]}x{small_img.shape[0]}) for detection", "INFO")
                     else:
                         raise e
             
             # Process results
+            OutputManager.status("Processing detection results")
             people = []
-            df = results.pandas().xyxy[0]
-            df = df[df['class'] == 0]
             
-            for _, row in df.iterrows():
-                x1, y1, x2, y2 = int(row['xmin']), int(row['ymin']), int(row['xmax']), int(row['ymax'])
+            # Handle different model result formats - YOLOv5 vs YOLOv8
+            try:
+                # Check if this is YOLOv8 model (ultralytics model)
+                if model_name.startswith('yolov8'):
+                    # YOLOv8 results format
+                    results_data = results
+                    
+                    # Using YOLOv8 format (which is a different structure than YOLOv5)
+                    if hasattr(results_data, 'boxes'):
+                        # Ultralytics API format
+                        for box in results_data.boxes:
+                            if (len(Config.Model.CLASSES) == 0 or 
+                                int(box.cls.item()) in Config.Model.CLASSES):
+                                
+                                conf = box.conf.item()
+                                if conf >= Config.Model.CONFIDENCE:
+                                    xyxy = box.xyxy.cpu().numpy()[0]
+                                    x1, y1, x2, y2 = map(int, xyxy)
+                                    
+                                    # Calculate center point and foot position
+                                    center_x = (x1 + x2) // 2
+                                    center_y = (y1 + y2) // 2
+                                    foot_x = center_x
+                                    foot_y = y2  # Bottom of bounding box represents feet
+                                    
+                                    # Add to people list
+                                    people.append({
+                                        'position': (center_x, center_y),
+                                        'foot_position': (foot_x, foot_y),
+                                        'bbox': (x1, y1, x2, y2),
+                                        'confidence': conf
+                                    })
+                    elif isinstance(results_data, list) and len(results_data) > 0:
+                        # Alternative format sometimes returned by YOLOv8
+                        for det in results_data[0]:
+                            if len(det) >= 6:  # xyxy, conf, cls
+                                x1, y1, x2, y2 = map(int, det[:4])
+                                conf = float(det[4])
+                                cls_id = int(det[5])
+                                
+                                if (len(Config.Model.CLASSES) == 0 or 
+                                    cls_id in Config.Model.CLASSES) and conf >= Config.Model.CONFIDENCE:
+                                    
+                                    # Calculate center point and foot position
+                                    center_x = (x1 + x2) // 2
+                                    center_y = (y1 + y2) // 2
+                                    foot_x = center_x
+                                    foot_y = y2  # Bottom of bounding box represents feet
+                                    
+                                    # Add to people list
+                                    people.append({
+                                        'position': (center_x, center_y),
+                                        'foot_position': (foot_x, foot_y),
+                                        'bbox': (x1, y1, x2, y2),
+                                        'confidence': conf
+                                    })
+                else:
+                    # YOLOv5 results format - using pandas
+                    df = results.pandas().xyxy[0]
+                    df = df[df['class'] == 0]
+                    
+                    for _, row in df.iterrows():
+                        x1, y1, x2, y2 = int(row['xmin']), int(row['ymin']), int(row['xmax']), int(row['ymax'])
+                        
+                        # Calculate center point and foot position
+                        center_x = (x1 + x2) // 2
+                        center_y = (y1 + y2) // 2
+                        foot_x = center_x
+                        foot_y = y2  # Bottom of bounding box represents feet
+                        
+                        # Add to people list
+                        people.append({
+                            'position': (center_x, center_y),
+                            'foot_position': (foot_x, foot_y),
+                            'bbox': (x1, y1, x2, y2),
+                            'confidence': row['confidence']
+                        })
+            except Exception as e:
+                error_msg = str(e)
                 
-                # Calculate center point and foot position
-                center_x = (x1 + x2) // 2
-                center_y = (y1 + y2) // 2
-                foot_x = center_x
-                foot_y = y2  # Bottom of bounding box represents feet
+                # Add more specific error messages for YOLOv8 vs YOLOv5 issues
+                if "'list' object has no attribute 'pandas'" in error_msg:
+                    OutputManager.log("YOLOv8 result format error. The script needs to be updated for YOLOv8 format.", "ERROR")
+                    OutputManager.log("Try using a YOLOv5 model instead with: --model yolov5s", "INFO")
+                elif "no attribute 'numpy'" in error_msg or "tensor" in error_msg.lower():
+                    OutputManager.log("YOLOv8 tensor processing error.", "ERROR")
+                    OutputManager.log("Try using a YOLOv5 model instead with: --model yolov5s", "INFO")
+                else:
+                    OutputManager.log(f"Problem detecting people: {error_msg}", "ERROR")
                 
-                # Add to people list
-                people.append({
-                    'position': (center_x, center_y),
-                    'foot_position': (foot_x, foot_y),
-                    'bbox': (x1, y1, x2, y2),
-                    'confidence': row['confidence']
-                })
+                # Continue with empty people list
+                people = []
             
-            OutputManager.stop_animation()
             # Report how many people we found
             OutputManager.log(f"Found {len(people)} {'person' if len(people) == 1 else 'people'} in the image", "SUCCESS")
+            if Config.Output.EXTRA_VERBOSE and people:
+                # Log details of detected people
+                for i, person in enumerate(people):
+                    x1, y1, x2, y2 = person['bbox']
+                    conf = person['confidence']
+                    OutputManager.log(f"Person {i+1}: bbox=({x1},{y1},{x2},{y2}), confidence={conf:.2f}", "DEBUG")
         except Exception as e:
-            OutputManager.stop_animation()
             error_msg = str(e)
             
             # Handle different types of errors with specific messages
@@ -1260,21 +1605,24 @@ def main():
         people_locations = []
         try:
             if people and courts:
-                OutputManager.animate("Analyzing positions")
+                OutputManager.status("Analyzing positions using multiprocessing")
                 
-                # Process each person
-                for person in people:
-                    court_idx, area_type = is_person_on_court(person, courts)
-                    people_locations.append((court_idx, area_type))
+                # Process in parallel using our optimized function
+                people_locations = analyze_people_positions_parallel(people, courts)
                 
-                OutputManager.stop_animation()
                 OutputManager.log("Positions analyzed successfully", "SUCCESS")
+                
+                # Count people by location type
+                in_bounds_count = sum(1 for _, area_type in people_locations if area_type == 'in_bounds')
+                out_bounds_count = sum(1 for _, area_type in people_locations if area_type == 'out_bounds')
+                off_court_count = sum(1 for _, area_type in people_locations if area_type == 'off_court')
+                
+                OutputManager.log(f"Position breakdown: {in_bounds_count} in-bounds, {out_bounds_count} sidelines, {off_court_count} off-court", "INFO")
             else:
                 # If no people or no courts, no need to analyze positions
                 for _ in range(len(people)):
                     people_locations.append((-1, 'off_court'))
         except Exception as e:
-            OutputManager.stop_animation()
             OutputManager.log(f"Error analyzing positions: {str(e)}", "ERROR")
             # Create fallback position data
             for _ in range(len(people)):
@@ -1308,12 +1656,13 @@ def main():
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
                 
                 cv2.imwrite(os.path.join(debug_folder, "foot_positions_debug.png"), debug_foot_positions)
+                OutputManager.log("Foot positions debug image saved", "DEBUG")
             except Exception as e:
                 OutputManager.log(f"Couldn't save foot positions debug image: {str(e)}", "WARNING")
         
         # Create final output image
         try:
-            OutputManager.animate("Creating output image")
+            OutputManager.status("Creating output image")
             output_image = image.copy()
             
             # Draw court outlines with different colors
@@ -1331,7 +1680,7 @@ def main():
                 cv2.drawContours(output_image, court_contours, -1, court_color, 2)
                 
                 # Draw court number at center only if enabled
-                if Config.Visual.SHOW_COURT_LABELS:
+                if Config.Visual.SHOW_COURT_NUMBER:
                     cx, cy = int(court['centroid'][0]), int(court['centroid'][1])
                     cv2.putText(output_image, f"Court {court_id}", (cx-40, cy), 
                                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
@@ -1389,17 +1738,15 @@ def main():
                                Config.Visual.TEXT_COLOR, 
                                Config.Visual.TEXT_THICKNESS)
             
-            OutputManager.stop_animation()
             OutputManager.log("Output image generated", "SUCCESS")
         except Exception as e:
-            OutputManager.stop_animation()
             OutputManager.log(f"Error creating output image: {str(e)}", "ERROR")
             output_image = image.copy()  # Use original image as fallback
         
         # Save the final output image
         output_path = Config.Paths.output_path()
         try:
-            OutputManager.animate("Saving image")
+            OutputManager.status("Saving output image")
             
             # Ensure output directory exists
             output_dir = os.path.dirname(output_path)
@@ -1411,15 +1758,15 @@ def main():
                     OutputManager.log(f"Cannot create output directory: {str(e)}", "ERROR")
             
             cv2.imwrite(output_path, output_image)
-            OutputManager.stop_animation()
-            OutputManager.log("Output image saved successfully", "SUCCESS")
+            OutputManager.log(f"Output image saved successfully to {output_path}", "SUCCESS")
         except Exception as e:
-            OutputManager.stop_animation()
             OutputManager.log(f"Error saving output image: {str(e)}", "ERROR")
             output_path = None
         
         # Create the adaptive final summary
         processing_time = time.time() - start_time
+        OutputManager.log(f"Total processing time: {processing_time:.2f} seconds", "INFO")
+        
         final_summary = OutputManager.create_final_summary(
             people_count=len(people),
             court_counts=court_counts,
@@ -1442,7 +1789,6 @@ def main():
         return 0
     except Exception as e:
         # This is the main catch-all for any unhandled exceptions in the try block
-        OutputManager.stop_animation()
         OutputManager.log(f"Unhandled error in main function: {str(e)}", "ERROR")
         
         # Create a basic summary with the error
@@ -1496,6 +1842,92 @@ def print_error_summary(summary):
     # Flush to ensure immediate display
     sys.stdout.flush()
 
+def download_yolo_model(model_name, url=None, disable_ssl_verify=False):
+    """Download YOLO model if it doesn't exist"""
+    # Create models directory if it doesn't exist
+    os.makedirs(Config.Paths.MODELS_DIR, exist_ok=True)
+    
+    model_path = os.path.join(Config.Paths.MODELS_DIR, f"{model_name}.pt")
+    
+    # Check if model exists
+    if os.path.exists(model_path):
+        OutputManager.log(f"Model {model_name} found at {model_path}", "SUCCESS")
+        return model_path
+    
+    # Get URL if not provided
+    if url is None:
+        url = Config.Model.get_model_url(model_name)
+    
+    OutputManager.log(f"Model {model_name} not found at {model_path}", "WARNING")
+    OutputManager.status(f"Downloading {model_name} from {url}")
+    
+    try:
+        # Handle SSL verification
+        if disable_ssl_verify:
+            # Disable SSL verification entirely
+            ssl._create_default_https_context = ssl._create_unverified_context
+            OutputManager.log("SSL verification disabled for download", "WARNING")
+        elif sys.platform == 'darwin':  # macOS specific fix
+            # On macOS, install certificates if needed
+            try:
+                import certifi # type: ignore
+                ssl_context = ssl.create_default_context(cafile=certifi.where())
+            except ImportError:
+                # If certifi is not installed, try to use macOS certificates
+                OutputManager.log("Installing SSL certificates for macOS...", "INFO")
+                import subprocess
+                subprocess.call(['/Applications/Python 3.x/Install Certificates.command'], shell=True)
+                # If that fails, we'll continue without it and might encounter errors
+        
+        # Create a progress reporter for the download
+        def report_progress(blocknum, blocksize, totalsize):
+            if totalsize > 0:
+                percent = min(blocknum * blocksize * 100 / totalsize, 100)
+                OutputManager.status(f"Downloading {model_name}: {percent:.1f}% of {totalsize/1024/1024:.1f} MB")
+        
+        # Download the file
+        try:
+            urllib.request.urlretrieve(url, model_path, report_progress)
+            OutputManager.log(f"Model {model_name} downloaded successfully", "SUCCESS")
+            return model_path
+        except (urllib.error.URLError, ssl.SSLError) as e:
+            OutputManager.log(f"Error downloading model: {str(e)}", "ERROR")
+            
+            # Special handling for SSL certificate errors
+            if isinstance(e, ssl.SSLCertVerificationError) or "CERTIFICATE_VERIFY_FAILED" in str(e):
+                OutputManager.log("SSL certificate verification failed. Try running with --disable-ssl-verify", "WARNING")
+                OutputManager.log("Alternatively, you can manually download the model:", "INFO")
+                OutputManager.log(f"1. Download from: {url}", "INFO")
+                OutputManager.log(f"2. Save it to: {model_path}", "INFO")
+                
+                # For macOS users, provide specific instructions
+                if sys.platform == 'darwin':
+                    OutputManager.log("For macOS users, run the following command in Terminal:", "INFO")
+                    OutputManager.log("/Applications/Python 3.x/Install Certificates.command", "INFO")
+                    OutputManager.log("Replace '3.x' with your Python version (e.g., 3.9, 3.10)", "INFO")
+            
+            # Try an alternative URL if this is a YOLOv8 model
+            if model_name.startswith("yolov8") and "ultralytics/assets" in url:
+                alt_url = f"https://github.com/ultralytics/ultralytics/releases/download/v8.0.0/{model_name}.pt"
+                OutputManager.log(f"Trying alternative URL for {model_name}: {alt_url}", "INFO")
+                try:
+                    urllib.request.urlretrieve(alt_url, model_path, report_progress)
+                    OutputManager.log(f"Model {model_name} downloaded successfully from alternative URL", "SUCCESS")
+                    return model_path
+                except Exception as e2:
+                    OutputManager.log(f"Alternative download also failed: {str(e2)}", "ERROR")
+            
+            raise Exception(f"Model file not found and could not be downloaded. Error: {str(e)}")
+    
+    except Exception as e:
+        # Clean up any partially downloaded file
+        if os.path.exists(model_path):
+            os.remove(model_path)
+        
+        # Log the error and re-raise
+        OutputManager.log(f"Failed to download {model_name}: {str(e)}", "ERROR")
+        raise
+
 if __name__ == "__main__":
     try:
         # Add command-line arguments for easier use
@@ -1508,7 +1940,13 @@ if __name__ == "__main__":
         parser.add_argument("--show-court-labels", action="store_true", help="Show court numbers on output image")
         parser.add_argument("--device", type=str, choices=["cpu", "cuda"], help="Device to use for inference", default=None)
         parser.add_argument("--disable-ssl-verify", action="store_true", help="Disable SSL verification for downloads")
+        parser.add_argument("--model", type=str, help="YOLO model to use (yolov5s, yolov5m, yolov5l, etc.)", default=Config.Model.NAME)
+        parser.add_argument("--no-multiprocessing", action="store_true", help="Disable multiprocessing")
+        parser.add_argument("--processes", type=int, help="Number of processes to use for multiprocessing", default=Config.MultiProcessing.NUM_PROCESSES)
+        parser.add_argument("--extra-verbose", action="store_true", help="Show extra detailed output for debugging")
+        parser.add_argument("--force-macos-cert-install", action="store_true", help="Force macOS certificate installation")
         
+        # Parse arguments
         try:
             args = parser.parse_args()
         except Exception as e:
@@ -1520,6 +1958,17 @@ if __name__ == "__main__":
         if args.disable_ssl_verify:
             ssl._create_default_https_context = ssl._create_unverified_context
             print("SSL verification disabled")
+        
+        # Handle macOS certificate installation
+        if args.force_macos_cert_install and sys.platform == 'darwin':
+            print("Attempting to install macOS certificates...")
+            try:
+                import subprocess
+                subprocess.call(['/Applications/Python 3.9/Install Certificates.command'], shell=True)
+                print("Certificate installation attempted. If it doesn't work, try with Python 3.10 or 3.11 instead.")
+            except Exception as e:
+                print(f"Certificate installation failed: {str(e)}")
+                print("Try manually running the 'Install Certificates.command' script in your Python application folder.")
         
         # Update config based on arguments
         try:
@@ -1535,6 +1984,20 @@ if __name__ == "__main__":
             Config.Output.VERBOSE = not args.quiet
             Config.Visual.SHOW_DETAILED_LABELS = args.show_labels
             Config.Visual.SHOW_COURT_LABELS = args.show_court_labels
+            
+            # Update model name if specified
+            if args.model:
+                Config.Model.NAME = args.model
+                print(f"Using model: {Config.Model.NAME}")
+            
+            # Update multiprocessing settings
+            Config.MultiProcessing.ENABLED = not args.no_multiprocessing
+            if args.processes > 0:
+                Config.MultiProcessing.NUM_PROCESSES = args.processes
+            
+            # Update extra verbose setting
+            if args.extra_verbose:
+                Config.Output.EXTRA_VERBOSE = True
             
             sys.exit(main())
         except Exception as e:
