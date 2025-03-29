@@ -28,6 +28,7 @@ import traceback
 from collections import Counter
 import logging
 import subprocess
+import math
 
 # Global variables
 args = None  # Will store command-line arguments
@@ -1777,7 +1778,7 @@ def main():
                             # Call our test script directly - this is a guaranteed solution
                             try:
                                 # Import the test function directly
-                                from test_yolo import test_yolov8_detector
+                                # from test_yolo import test_yolov8_detector  # Using local function defined below
                                 OutputManager.log(f"Using direct test function for {model_name}", "INFO")
                                 
                                 # Force debug mode in Config
