@@ -235,8 +235,8 @@ class Config:
     # Multiprocessing settings
     class MultiProcessing:
         ENABLED = True              # Enable multiprocessing
-        NUM_PROCESSES = 3           # Number of CPU cores to use
-        CHUNK_SIZE = 10             # Chunk size for processing
+        NUM_PROCESSES = 4           # Number of CPU cores to use
+        CHUNK_SIZE = 75             # Chunk size for processing
 
 class OutputManager:
     """
