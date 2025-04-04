@@ -29,6 +29,7 @@ from collections import Counter
 import logging
 import subprocess
 import math
+from camera import takePhoto
 
 # Global variables
 args = None  # Will store command-line arguments
@@ -1452,6 +1453,8 @@ def main():
     """Main function optimized for Raspberry Pi Zero"""
     # Start timer
     start_time = time.time()
+    
+    takePhoto(); # take a photo through the camera
     
     # Reset any previously tracked logs
     OutputManager.reset_logs()
