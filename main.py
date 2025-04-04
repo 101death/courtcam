@@ -150,7 +150,7 @@ class Config:
     
     # Model settings
     class Model:
-        NAME = "yolov8x"             # YOLOv5 model size (yolov5s, yolov5m, yolov5l, etc.)
+        NAME = "yolov8n"             # YOLOv5 model size (yolov5s, yolov5m, yolov5l, etc.)
         CONFIDENCE = 0.1             # Detection confidence threshold (lowered from 0.3)
         IOU = 0.45                   # IoU threshold
         CLASSES = [0]                # Only detect people (class 0)
@@ -237,7 +237,7 @@ class Config:
     class MultiProcessing:
         ENABLED = True              # Enable multiprocessing
         NUM_PROCESSES = 4           # Number of CPU cores to use
-        CHUNK_SIZE = 75             # Chunk size for processing
+        CHUNK_SIZE = 125             # Chunk size for processing
 
 class OutputManager:
     """
