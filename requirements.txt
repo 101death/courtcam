@@ -8,3 +8,4 @@ ultralytics>=8.0.0  # For YOLOv8 models
 tqdm>=4.65.0  # For progress bars
 Pillow>=10.0.0  # For image processing
 matplotlib>=3.7.0  # For visualization
+picamera>=1.13  # For Raspberry Pi camera control
