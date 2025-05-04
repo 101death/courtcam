@@ -29,7 +29,29 @@ from collections import Counter
 import logging
 import subprocess
 import math
-from camera import takePhoto
+
+# Attempt to import camera module, handle failure gracefully
+try:
+    from camera import takePhoto
+    CAMERA_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Could not import camera module: {e}")
+    print("Camera functionality will be disabled.")
+    CAMERA_AVAILABLE = False
+    
+    # Define a dummy takePhoto function if the import fails
+    def takePhoto(resolution=(1920, 1080), output_file='images/input.png'):
+        print(f"Camera not available. Skipping photo capture to {output_file}.")
+        # Create a dummy black image as a placeholder if the file doesn't exist
+        if not os.path.exists(output_file):
+            print(f"Creating placeholder image at {output_file}")
+            dummy_image = np.zeros((resolution[1], resolution[0], 3), dtype=np.uint8)
+            try:
+                # Ensure directory exists
+                os.makedirs(os.path.dirname(output_file), exist_ok=True)
+                cv2.imwrite(output_file, dummy_image)
+            except Exception as write_error:
+                print(f"Error creating placeholder image: {write_error}")
 
 # Global variables
 args = None  # Will store command-line arguments
@@ -667,6 +689,12 @@ class OutputManager:
                     messages.append(f"Missing Shapely: {module_name}\nRun: pip install shapely")
                 elif module_name == "ultralytics" and "yolov8" in error.lower():
                     messages.append(f"Missing Ultralytics package needed for YOLOv8\nRun: pip install ultralytics\nOr use YOLOv5 model: python main.py --model yolov5s")
+                # Add check for picamera
+                elif module_name == "picamera" or module_name == "picamera.array":
+                    messages.append(f"Missing PiCamera library: {module_name}\nRun: pip install picamera[array]")
+                    # Add specific instructions for Raspberry Pi OS Bullseye or later
+                    if sys.platform == "linux" and 'arm' in os.uname().machine:
+                        messages.append("On newer Raspberry Pi OS (Bullseye/Bookworm), use:\n1. sudo raspi-config (enable camera interface)\n2. pip install picamera2\n3. Update the camera.py script to use picamera2")
                 else:
                     messages.append(f"Missing module: {module_name}\nRun: pip install {module_name}\nOr: pip install -r requirements.txt")
                 
@@ -746,6 +774,10 @@ class OutputManager:
             elif any(word in error.lower() for word in ["disk", "space", "storage", "write"]):
                 messages.append("Disk space or write error\nCheck that you have sufficient disk space and write permissions in the current directory")
                
+            # Raspberry Pi specific library errors
+            elif "libbcm_host.so" in error:
+                messages.append("Raspberry Pi library missing (libbcm_host.so)\nThis is needed for the PiCamera. Run:\n1. sudo apt update && sudo apt install -y libraspberrypi-dev\n2. Make sure the camera interface is enabled in `raspi-config`")
+            
             # For any other errors, give a more detailed message
             else:
                 messages.append(f"Error: {error}\n\nGeneral troubleshooting:\n1. Ensure all dependencies are installed: pip install -r requirements.txt\n2. Check for proper YOLO model: models/yolov5s.pt\n3. Verify input image exists and is readable\n4. Try running with --debug flag for more information")
@@ -849,6 +881,12 @@ class OutputManager:
                     messages.append(f"Missing Shapely: {module_name}\nRun: pip install shapely")
                 elif module_name == "ultralytics" and "yolov8" in error.lower():
                     messages.append(f"Missing Ultralytics package needed for YOLOv8\nRun: pip install ultralytics\nOr use YOLOv5 model: python main.py --model yolov5s")
+                # Add check for picamera
+                elif module_name == "picamera" or module_name == "picamera.array":
+                    messages.append(f"Missing PiCamera library: {module_name}\nRun: pip install picamera[array]")
+                    # Add specific instructions for Raspberry Pi OS Bullseye or later
+                    if sys.platform == "linux" and 'arm' in os.uname().machine:
+                        messages.append("On newer Raspberry Pi OS (Bullseye/Bookworm), use:\n1. sudo raspi-config (enable camera interface)\n2. pip install picamera2\n3. Update the camera.py script to use picamera2")
                 else:
                     messages.append(f"Missing module: {module_name}\nRun: pip install {module_name}\nOr: pip install -r requirements.txt")
                 
@@ -928,6 +966,10 @@ class OutputManager:
             elif any(word in error.lower() for word in ["disk", "space", "storage", "write"]):
                 messages.append("Disk space or write error\nCheck that you have sufficient disk space and write permissions in the current directory")
                
+            # Raspberry Pi specific library errors
+            elif "libbcm_host.so" in error:
+                messages.append("Raspberry Pi library missing (libbcm_host.so)\nThis is needed for the PiCamera. Run:\n1. sudo apt update && sudo apt install -y libraspberrypi-dev\n2. Make sure the camera interface is enabled in `raspi-config`")
+            
             # For any other errors, give a more detailed message
             else:
                 messages.append(f"Error: {error}\n\nGeneral troubleshooting:\n1. Ensure all dependencies are installed: pip install -r requirements.txt\n2. Check for proper YOLO model: models/yolov5s.pt\n3. Verify input image exists and is readable\n4. Try running with --debug flag for more information")
@@ -1454,7 +1496,16 @@ def main():
     # Start timer
     start_time = time.time()
     
-    takePhoto(); # take a photo through the camera
+    # Take photo only if camera is available
+    if CAMERA_AVAILABLE:
+        try:
+            takePhoto() # take a photo through the camera
+            OutputManager.log("Photo captured successfully.", "SUCCESS")
+        except Exception as e:
+            OutputManager.log(f"Error taking photo: {e}", "ERROR")
+            OutputManager.log("Proceeding without capturing a new photo.", "WARNING")
+    else:
+        OutputManager.log("Skipping photo capture as camera is not available.", "WARNING")
     
     # Reset any previously tracked logs
     OutputManager.reset_logs()
@@ -2594,6 +2645,7 @@ if __name__ == "__main__":
         # Add new arguments for merged functionality
         parser.add_argument("--install-ultralytics", action="store_true", help="Install the ultralytics package")
         parser.add_argument("--test-yolo", action="store_true", help="Run YOLO model test on the input image")
+        parser.add_argument("--no-camera", action="store_true", help="Disable camera usage (useful for testing without hardware)")
         
         # Parse arguments
         try:
@@ -2622,6 +2674,22 @@ if __name__ == "__main__":
             test_yolov8_detector(image_path, model_name=model_name, verbose=not args.quiet)
             sys.exit(0)
         
+        # Handle --no-camera flag
+        if args.no_camera:
+             print("Camera explicitly disabled via --no-camera flag.")
+             CAMERA_AVAILABLE = False
+             # Redefine takePhoto as dummy if camera disabled late
+             def takePhoto(resolution=(1920, 1080), output_file='images/input.png'):
+                 print(f"Camera disabled. Skipping photo capture to {output_file}.")
+                 if not os.path.exists(output_file):
+                     print(f"Creating placeholder image at {output_file}")
+                     dummy_image = np.zeros((resolution[1], resolution[0], 3), dtype=np.uint8)
+                     try:
+                         os.makedirs(os.path.dirname(output_file), exist_ok=True)
+                         cv2.imwrite(output_file, dummy_image)
+                     except Exception as write_error:
+                         print(f"Error creating placeholder image: {write_error}")
+
         # Handle SSL verification setting early
         if args.disable_ssl_verify:
             ssl._create_default_https_context = ssl._create_unverified_context
