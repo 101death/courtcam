@@ -49,9 +49,11 @@ for dir in ['images', 'models']:
         OutputManager.log(f'Directory {dir} created successfully', 'SUCCESS')
 
 # Check for camera support
+is_raspberry_pi = False
 if os.path.exists('/proc/device-tree/model'):
     with open('/proc/device-tree/model', 'r') as f:
         if 'Raspberry Pi' in f.read():
+            is_raspberry_pi = True
             OutputManager.log('Raspberry Pi detected', 'INFO')
             
             # Check for picamera2 (newer systems)
@@ -69,10 +71,9 @@ if os.path.exists('/proc/device-tree/model'):
             else:
                 OutputManager.log('legacy picamera is not installed', 'WARNING')
                 OutputManager.log('To install legacy picamera, run: pip install picamera', 'INFO')
-        else:
-            OutputManager.log('Not running on Raspberry Pi - camera support will be limited', 'WARNING')
-    else:
-        OutputManager.log('Not running on Raspberry Pi - camera support will be limited', 'WARNING')
+
+if not is_raspberry_pi:
+    OutputManager.log('Not running on Raspberry Pi - camera support will be limited', 'WARNING')
 
 OutputManager.log('Setup completed successfully', 'SUCCESS')
 "
