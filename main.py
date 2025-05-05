@@ -507,25 +507,58 @@ def get_model_path(model_name):
                 os.makedirs(Config.Paths.MODELS_DIR, exist_ok=True)
                 shutil.move(downloaded_path, model_path)
                 return model_path
+    except ImportError:
+        OutputManager.log("Error: ultralytics package not found. Please install it using: pip install ultralytics", "ERROR")
+        return None
     except Exception as e:
-        OutputManager.log(f"Failed to download model {model_name}: {str(e)}", "ERROR")
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            OutputManager.log(f"Error: Model '{model_name}' not found in the ultralytics repository", "ERROR")
+        elif "permission denied" in error_msg.lower():
+            OutputManager.log(f"Error: Permission denied when trying to download model. Please check write permissions in {Config.Paths.MODELS_DIR}", "ERROR")
+        else:
+            OutputManager.log(f"Error downloading model {model_name}: {error_msg}", "ERROR")
         return None
 
 def select_model():
     """Let user select a model from available options."""
-    OutputManager.log("Available models:", "INFO")
-    for i, model in enumerate(Config.Model.AVAILABLE_MODELS, 1):
-        OutputManager.log(f"{i}. {model}", "INFO")
+    print("\n" + "="*50)
+    print("Available YOLO Models:")
+    print("="*50)
+    
+    # Group models by version
+    v5_models = [m for m in Config.Model.AVAILABLE_MODELS if m.startswith("yolov5")]
+    v8_models = [m for m in Config.Model.AVAILABLE_MODELS if m.startswith("yolov8")]
+    
+    if v5_models:
+        print("\nYOLOv5 Models:")
+        print("-"*20)
+        for i, model in enumerate(v5_models, 1):
+            size = model.split("v5")[1].upper()
+            print(f"{i}. {model} ({size} - Faster, less accurate)")
+    
+    if v8_models:
+        print("\nYOLOv8 Models:")
+        print("-"*20)
+        for i, model in enumerate(v8_models, len(v5_models) + 1):
+            size = model.split("v8")[1].upper()
+            print(f"{i}. {model} ({size} - Newer, more accurate)")
+    
+    print("\n" + "="*50)
     
     while True:
         try:
-            choice = input("Select a model number: ")
+            choice = input("\nSelect a model number (or 'q' to quit): ")
+            if choice.lower() == 'q':
+                return None
+                
             idx = int(choice) - 1
             if 0 <= idx < len(Config.Model.AVAILABLE_MODELS):
                 return Config.Model.AVAILABLE_MODELS[idx]
+            else:
+                print(f"\nInvalid selection. Please choose a number between 1 and {len(Config.Model.AVAILABLE_MODELS)}")
         except ValueError:
-            pass
-        OutputManager.log("Invalid selection. Please try again.", "ERROR")
+            print("\nInvalid input. Please enter a number or 'q' to quit.")
 
 def ensure_model_available(model_name):
     """Ensure the specified model is available, downloading if necessary."""
@@ -536,8 +569,16 @@ def ensure_model_available(model_name):
         return model_path
         
     # If download failed, let user select a different model
-    OutputManager.log(f"Could not download {model_name}. Please select a different model:", "WARNING")
+    print("\n" + "="*50)
+    print(f"Could not download {model_name}.")
+    print("Please select a different model from the list below:")
+    print("="*50)
+    
     new_model = select_model()
+    if new_model is None:
+        OutputManager.log("No model selected. Exiting.", "ERROR")
+        return None
+        
     return get_model_path(new_model)
 
 def main():
