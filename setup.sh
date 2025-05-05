@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Import OutputManager from main.py
-python3 -c "
+# Function to run Python setup
+python_setup() {
+    python3 -c "
 import sys
 sys.path.append('.')
 from main import OutputManager
@@ -41,37 +42,50 @@ if not success:
 OutputManager.log('Requirements installed successfully', 'SUCCESS')
 
 # Create necessary directories
-directories=('images' 'models')
-for dir in \"\${directories[@]}\"; do
-    if [ ! -d \"\$dir\" ]; then
+for dir in ['images', 'models']:
+    if not os.path.exists(dir):
         OutputManager.log(f'Creating directory: {dir}', 'INFO')
         os.makedirs(dir, exist_ok=True)
         OutputManager.log(f'Directory {dir} created successfully', 'SUCCESS')
-    fi
-done
 
 # Check for camera support
-if [ -f '/proc/device-tree/model' ] && grep -q 'Raspberry Pi' /proc/device-tree/model; then
-    OutputManager.log('Raspberry Pi detected', 'INFO')
-    
-    # Check for picamera2 (newer systems)
-    if dpkg -l | grep -q 'python3-picamera2'; then
-        OutputManager.log('picamera2 is installed', 'SUCCESS')
-    else
-        OutputManager.log('picamera2 is not installed', 'WARNING')
-        OutputManager.log('To install picamera2, run: sudo apt install python3-picamera2 libcamera-dev', 'INFO')
-    fi
-    
-    # Check for legacy picamera
-    if pip list | grep -q 'picamera'; then
-        OutputManager.log('legacy picamera is installed', 'SUCCESS')
-    else
-        OutputManager.log('legacy picamera is not installed', 'WARNING')
-        OutputManager.log('To install legacy picamera, run: pip install picamera', 'INFO')
-    fi
-else
-    OutputManager.log('Not running on Raspberry Pi - camera support will be limited', 'WARNING')
-fi
+if os.path.exists('/proc/device-tree/model'):
+    with open('/proc/device-tree/model', 'r') as f:
+        if 'Raspberry Pi' in f.read():
+            OutputManager.log('Raspberry Pi detected', 'INFO')
+            
+            # Check for picamera2 (newer systems)
+            success, output = run_command('dpkg -l | grep python3-picamera2')
+            if success:
+                OutputManager.log('picamera2 is installed', 'SUCCESS')
+            else:
+                OutputManager.log('picamera2 is not installed', 'WARNING')
+                OutputManager.log('To install picamera2, run: sudo apt install python3-picamera2 libcamera-dev', 'INFO')
+            
+            # Check for legacy picamera
+            success, output = run_command('pip list | grep picamera')
+            if success:
+                OutputManager.log('legacy picamera is installed', 'SUCCESS')
+            else:
+                OutputManager.log('legacy picamera is not installed', 'WARNING')
+                OutputManager.log('To install legacy picamera, run: pip install picamera', 'INFO')
+        else:
+            OutputManager.log('Not running on Raspberry Pi - camera support will be limited', 'WARNING')
+    else:
+        OutputManager.log('Not running on Raspberry Pi - camera support will be limited', 'WARNING')
 
 OutputManager.log('Setup completed successfully', 'SUCCESS')
 "
+}
+
+# Run the Python setup
+python_setup
+
+# Print post-install instructions
+echo
+echo "To activate the virtual environment, run:"
+echo "source venv/bin/activate"
+echo
+echo "To run the detection, use:"
+echo "python main.py"
+echo
