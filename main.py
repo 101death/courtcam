@@ -695,6 +695,8 @@ class OutputManager:
                     # Add specific instructions for Raspberry Pi OS Bullseye or later
                     if sys.platform == "linux" and 'arm' in os.uname().machine:
                         messages.append("On newer Raspberry Pi OS (Bullseye/Bookworm), use:\n1. sudo raspi-config (enable camera interface)\n2. pip install picamera2\n3. Update the camera.py script to use picamera2")
+                elif module_name == "picamera2":
+                    messages.append(f"Missing PiCamera2 library (recommended for newer Raspberry Pi OS)\nRun: sudo apt install -y python3-picamera2 libcamera-dev")
                 else:
                     messages.append(f"Missing module: {module_name}\nRun: pip install {module_name}\nOr: pip install -r requirements.txt")
                 
@@ -777,6 +779,8 @@ class OutputManager:
             # Raspberry Pi specific library errors
             elif "libbcm_host.so" in error:
                 messages.append("Raspberry Pi library missing (libbcm_host.so)\nThis is needed for the PiCamera. Run:\n1. sudo apt update && sudo apt install -y libraspberrypi-dev\n2. Make sure the camera interface is enabled in `raspi-config`")
+            elif "libmmal.so" in error:
+                messages.append("Raspberry Pi multimedia library missing (libmmal.so)\nThis is needed for the PiCamera. Run:\n1. sudo apt update && sudo apt install -y libraspberrypi-dev libcamera-dev python3-libcamera\n2. Make sure the camera interface is enabled in `raspi-config`\n3. Or run with --no-camera flag to skip camera usage")
             
             # For any other errors, give a more detailed message
             else:
@@ -887,6 +891,8 @@ class OutputManager:
                     # Add specific instructions for Raspberry Pi OS Bullseye or later
                     if sys.platform == "linux" and 'arm' in os.uname().machine:
                         messages.append("On newer Raspberry Pi OS (Bullseye/Bookworm), use:\n1. sudo raspi-config (enable camera interface)\n2. pip install picamera2\n3. Update the camera.py script to use picamera2")
+                elif module_name == "picamera2":
+                    messages.append(f"Missing PiCamera2 library (recommended for newer Raspberry Pi OS)\nRun: sudo apt install -y python3-picamera2 libcamera-dev")
                 else:
                     messages.append(f"Missing module: {module_name}\nRun: pip install {module_name}\nOr: pip install -r requirements.txt")
                 
@@ -969,6 +975,8 @@ class OutputManager:
             # Raspberry Pi specific library errors
             elif "libbcm_host.so" in error:
                 messages.append("Raspberry Pi library missing (libbcm_host.so)\nThis is needed for the PiCamera. Run:\n1. sudo apt update && sudo apt install -y libraspberrypi-dev\n2. Make sure the camera interface is enabled in `raspi-config`")
+            elif "libmmal.so" in error:
+                messages.append("Raspberry Pi multimedia library missing (libmmal.so)\nThis is needed for the PiCamera. Run:\n1. sudo apt update && sudo apt install -y libraspberrypi-dev libcamera-dev python3-libcamera\n2. Make sure the camera interface is enabled in `raspi-config`\n3. Or run with --no-camera flag to skip camera usage")
             
             # For any other errors, give a more detailed message
             else:
@@ -1499,7 +1507,17 @@ def main():
     # Take photo only if camera is available
     if CAMERA_AVAILABLE:
         try:
-            takePhoto() # take a photo through the camera
+            # Check if camera resolution is specified
+            camera_resolution = (1920, 1080)  # Default resolution
+            if hasattr(args, 'camera_resolution') and args.camera_resolution:
+                try:
+                    width, height = args.camera_resolution.split(',')
+                    camera_resolution = (int(width), int(height))
+                    OutputManager.log(f"Using custom camera resolution: {camera_resolution}", "INFO")
+                except Exception as e:
+                    OutputManager.log(f"Invalid camera resolution format: {args.camera_resolution}. Using default.", "WARNING")
+            
+            takePhoto(resolution=camera_resolution) # take a photo through the camera
             OutputManager.log("Photo captured successfully.", "SUCCESS")
         except Exception as e:
             OutputManager.log(f"Error taking photo: {e}", "ERROR")
@@ -2646,6 +2664,7 @@ if __name__ == "__main__":
         parser.add_argument("--install-ultralytics", action="store_true", help="Install the ultralytics package")
         parser.add_argument("--test-yolo", action="store_true", help="Run YOLO model test on the input image")
         parser.add_argument("--no-camera", action="store_true", help="Disable camera usage (useful for testing without hardware)")
+        parser.add_argument("--camera-resolution", type=str, help="Set camera resolution as width,height (e.g., 640,480)", default=None)
         
         # Parse arguments
         try:
