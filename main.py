@@ -47,7 +47,19 @@ class Config:
     class Model:
         NAME = "yolov8n"             # Default model
         CONFIDENCE = 0.25            # Detection confidence threshold
-        
+        AVAILABLE_MODELS = [
+            "yolov5n",  # nano
+            "yolov5s",  # small
+            "yolov5m",  # medium
+            "yolov5l",  # large
+            "yolov5x",  # xlarge
+            "yolov8n",  # nano
+            "yolov8s",  # small
+            "yolov8m",  # medium
+            "yolov8l",  # large
+            "yolov8x",  # xlarge
+        ]
+
 # Global variables        
 CAMERA_AVAILABLE = False
 
@@ -473,6 +485,61 @@ def create_placeholder_image(resolution=(640, 480), output_file='images/input.pn
         OutputManager.log(f"Error creating placeholder image: {str(e)}", "ERROR")
         return False
 
+def get_model_path(model_name):
+    """Get the path to the model file, downloading if necessary."""
+    model_path = os.path.join(Config.Paths.MODELS_DIR, f"{model_name}.pt")
+    
+    # If model exists, return its path
+    if os.path.exists(model_path):
+        return model_path
+        
+    # Model doesn't exist, try to download it
+    try:
+        # Suppress output during download
+        with suppress_stdout_stderr():
+            from ultralytics import YOLO
+            model = YOLO(model_name)
+            model.export(format="pt")  # Export to PyTorch format
+            
+            # Move the downloaded model to our models directory
+            downloaded_path = f"{model_name}.pt"
+            if os.path.exists(downloaded_path):
+                os.makedirs(Config.Paths.MODELS_DIR, exist_ok=True)
+                shutil.move(downloaded_path, model_path)
+                return model_path
+    except Exception as e:
+        OutputManager.log(f"Failed to download model {model_name}: {str(e)}", "ERROR")
+        return None
+
+def select_model():
+    """Let user select a model from available options."""
+    OutputManager.log("Available models:", "INFO")
+    for i, model in enumerate(Config.Model.AVAILABLE_MODELS, 1):
+        OutputManager.log(f"{i}. {model}", "INFO")
+    
+    while True:
+        try:
+            choice = input("Select a model number: ")
+            idx = int(choice) - 1
+            if 0 <= idx < len(Config.Model.AVAILABLE_MODELS):
+                return Config.Model.AVAILABLE_MODELS[idx]
+        except ValueError:
+            pass
+        OutputManager.log("Invalid selection. Please try again.", "ERROR")
+
+def ensure_model_available(model_name):
+    """Ensure the specified model is available, downloading if necessary."""
+    # Try to get the model
+    model_path = get_model_path(model_name)
+    
+    if model_path:
+        return model_path
+        
+    # If download failed, let user select a different model
+    OutputManager.log(f"Could not download {model_name}. Please select a different model:", "WARNING")
+    new_model = select_model()
+    return get_model_path(new_model)
+
 def main():
     """Main function."""
     # Parse command-line arguments
@@ -493,6 +560,12 @@ def main():
     os.makedirs(Config.Paths.MODELS_DIR, exist_ok=True)
     
     try:
+        # Ensure model is available
+        model_path = ensure_model_available(args.model)
+        if not model_path:
+            OutputManager.log("Failed to obtain a valid model. Exiting.", "ERROR")
+            return 1
+            
         # Process input image
         if args.input_image:
             # Use the provided input image
