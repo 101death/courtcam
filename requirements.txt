@@ -1,10 +1,21 @@
-torch>=1.9.0
-torchvision>=0.10.0
-opencv-python>=4.5.0
-numpy>=1.20.0
-pandas>=2.0.0
+# Core requirements
+torch>=1.7.0,<2.0.0
+torchvision>=0.8.0,<2.0.0
+opencv-python>=4.4.0
+numpy==1.19.5  # Fixed version to avoid binary incompatibility issues on Raspberry Pi
+pandas>=1.1.0
 shapely>=1.7.0
-ultralytics>=8.0.0  # For YOLOv8 models
-tqdm>=4.65.0  # For progress bars
-Pillow>=10.0.0  # For image processing
-matplotlib>=3.7.0  # For visualization
+# Optional for YOLOv8 and newer models
+ultralytics>=8.0.0
+# Utilities
+tqdm>=4.41.0
+Pillow>=8.0.0
+matplotlib>=3.3.0
+# Camera support (choose based on your Raspberry Pi OS)
+# For Raspberry Pi OS Buster (Legacy)
+picamera>=1.13 ; python_version < '3.9'
+# For Raspberry Pi OS Bullseye/Bookworm
+# Note: picamera2 is typically installed via apt and not pip
+# sudo apt install -y python3-picamera2 libcamera-dev
+# Additional dependencies for Raspberry Pi
+certifi>=2020.6.20
