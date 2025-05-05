@@ -3,6 +3,10 @@ import time
 import os
 import sys
 import subprocess
+import io
+import re
+import contextlib
+from contextlib import redirect_stdout, redirect_stderr
 
 # Define platform and architecture detection
 IS_RASPBERRY_PI = False
@@ -27,21 +31,110 @@ except:
 # Check if we're on 64-bit architecture
 IS_64BIT = sys.maxsize > 2**32
 
+# Function to capture and format camera output
+def format_camera_output(func):
+    """
+    Decorator to format camera output with emojis and remove timestamps.
+    """
+    def wrapper(*args, **kwargs):
+        # Capture stdout and stderr
+        stdout_buffer = io.StringIO()
+        stderr_buffer = io.StringIO()
+        
+        with redirect_stdout(stdout_buffer), redirect_stderr(stderr_buffer):
+            result = func(*args, **kwargs)
+        
+        # Process captured output
+        stdout_output = stdout_buffer.getvalue()
+        stderr_output = stderr_buffer.getvalue()
+        combined_output = stdout_output + stderr_output
+        
+        # Filter and format the messages with emojis
+        if combined_output:
+            lines = combined_output.strip().split('\n')
+            for line in lines:
+                # Skip empty lines
+                if not line.strip():
+                    continue
+                    
+                # Format based on message type
+                if 'ERROR' in line or 'Error' in line:
+                    print(f"❌ {re.sub(r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+', '', line)}")
+                elif 'WARN' in line:
+                    print(f"⚠️ {re.sub(r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+', '', line)}")
+                elif 'INFO' in line:
+                    print(f"ℹ️ {re.sub(r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+', '', line)}")
+                else:
+                    print(f"✓ {line}")
+        
+        return result
+    
+    return wrapper
+
+# Context manager version for inline usage
+class CameraOutputFormatter:
+    """
+    Context manager to format camera output with emojis.
+    
+    Usage example:
+    with CameraOutputFormatter():
+        # code that generates camera output
+    """
+    def __enter__(self):
+        # Set up buffers for capturing output
+        self.stdout_buffer = io.StringIO()
+        self.stderr_buffer = io.StringIO()
+        self.old_stdout = sys.stdout
+        self.old_stderr = sys.stderr
+        sys.stdout = self.stdout_buffer
+        sys.stderr = self.stderr_buffer
+        return self
+        
+    def __exit__(self, exc_type, exc_value, traceback):
+        # Restore original stdout/stderr
+        sys.stdout = self.old_stdout
+        sys.stderr = self.old_stderr
+        
+        # Process captured output
+        stdout_output = self.stdout_buffer.getvalue()
+        stderr_output = self.stderr_buffer.getvalue()
+        combined_output = stdout_output + stderr_output
+        
+        # Filter and format the messages with emojis
+        if combined_output:
+            lines = combined_output.strip().split('\n')
+            for line in lines:
+                # Skip empty lines
+                if not line.strip():
+                    continue
+                    
+                # Format based on message type
+                if 'ERROR' in line or 'Error' in line:
+                    print(f"❌ {re.sub(r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+', '', line)}")
+                elif 'WARN' in line:
+                    print(f"⚠️ {re.sub(r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+', '', line)}")
+                elif 'INFO' in line:
+                    print(f"ℹ️ {re.sub(r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+', '', line)}")
+                else:
+                    print(f"✓ {line}")
+
 # Import camera modules conditionally
 try:
     from picamera2 import Picamera2
     PI_CAMERA_VERSION = 2
-    print("Using picamera2 module")
+    print("✓ Using picamera2 module")
 except ImportError:
     try:
         import picamera
         from picamera.array import PiRGBArray
         PI_CAMERA_VERSION = 1
-        print("Using legacy picamera module")
+        print("✓ Using legacy picamera module")
     except ImportError:
         PI_CAMERA_VERSION = None
         # No verbose output here - will be handled by main program
 
+# Keep the decorator for when this module is used directly
+@format_camera_output
 def takePhoto(resolution=DEFAULT_RESOLUTION, output_file='images/input.png'):
     """
     Take a photo using the Raspberry Pi camera.
@@ -89,7 +182,7 @@ def takePhoto(resolution=DEFAULT_RESOLUTION, output_file='images/input.png'):
 
 # Example of calling the function (will run when this script is executed directly)
 if __name__ == "__main__":
-    print("Running takePhoto function directly...")
+    print("✓ Running takePhoto function directly...")
     
     # Check for custom resolution in arguments
     resolution = DEFAULT_RESOLUTION  # Use lower default resolution
@@ -97,13 +190,13 @@ if __name__ == "__main__":
         try:
             w, h = sys.argv[1].split(",")
             resolution = (int(w), int(h))
-            print(f"Using custom resolution: {resolution}")
+            print(f"✓ Using custom resolution: {resolution}")
         except Exception as e:
-            print(f"Error parsing resolution: {e}")
+            print(f"❌ Error parsing resolution: {e}")
     
     success = takePhoto(resolution=resolution)
     if success:
-        print("takePhoto function completed successfully.")
+        print("✓ takePhoto function completed successfully.")
     else:
-        print("takePhoto function completed with errors.")
+        print("❌ takePhoto function completed with errors.")
         sys.exit(1)

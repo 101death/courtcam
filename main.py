@@ -56,13 +56,20 @@ DEFAULT_CAMERA_RESOLUTION = (640, 480)
 
 # Try to import camera module
 try:
-    from camera import takePhoto, DEFAULT_RESOLUTION
+    from camera import takePhoto, DEFAULT_RESOLUTION, CameraOutputFormatter
     CAMERA_AVAILABLE = True
     DEFAULT_CAMERA_RESOLUTION = DEFAULT_RESOLUTION
 except ImportError:
     # Define dummy takePhoto function when camera is not available
     def takePhoto(resolution=DEFAULT_CAMERA_RESOLUTION, output_file='images/input.png'):
         return False
+    
+    # Define dummy CameraOutputFormatter class when camera module is not available
+    class CameraOutputFormatter:
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
 
 # Output manager for centralized output handling
 class OutputManager:
@@ -478,7 +485,10 @@ def main():
                 return 1
         elif CAMERA_AVAILABLE and not args.no_camera:
             # Take a photo using the camera
-            success = takePhoto(output_file=Config.Paths.input_path())
+            # Use the context manager only for the camera operation
+            with CameraOutputFormatter():
+                success = takePhoto(output_file=Config.Paths.input_path())
+            
             if success:
                 OutputManager.log("Photo captured successfully.", "SUCCESS")
             else:
