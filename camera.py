@@ -8,6 +8,10 @@ import subprocess
 IS_RASPBERRY_PI = False
 IS_64BIT = False
 PI_MODEL = "unknown"
+PI_CAMERA_VERSION = None
+
+# Lower default resolution for better performance
+DEFAULT_RESOLUTION = (640, 480)  # Reduced from 1920x1080 to 640x480 for better performance
 
 try:
     # Check if running on Raspberry Pi
@@ -23,6 +27,25 @@ try:
                 if '64' in os.uname().machine:
                     IS_64BIT = True
                     print("Detected 64-bit OS")
+                
+                # Try to detect Camera Module version
+                try:
+                    # Use v4l2-ctl to detect camera properties if available
+                    result = subprocess.run(['v4l2-ctl', '--list-devices'], 
+                                           capture_output=True, text=True, check=False)
+                    
+                    if "Camera 3" in result.stdout:
+                        PI_CAMERA_VERSION = 3
+                        print("Detected Raspberry Pi Camera 3")
+                    elif "Camera 2" in result.stdout:
+                        PI_CAMERA_VERSION = 2
+                        print("Detected Raspberry Pi Camera 2")
+                    elif "Camera Module" in result.stdout:
+                        PI_CAMERA_VERSION = 1
+                        print("Detected Raspberry Pi Camera 1")
+                except Exception as e:
+                    # Can't detect camera version from v4l2-ctl
+                    print(f"Unable to determine exact camera version: {e}")
 except Exception as e:
     print(f"Error detecting Raspberry Pi: {e}")
 
@@ -94,7 +117,14 @@ if PICAMERA_LIB is None:
         print("   sudo raspi-config → Interface Options → Camera → Enable")
         print("   (Reboot required after enabling)")
         
-        if "Zero 2" in PI_MODEL:
+        if PI_CAMERA_VERSION == 3:
+            print("\nSpecific instructions for Raspberry Pi Camera 3:")
+            print("1. Ensure you have the latest OS and libraries:")
+            print("   sudo apt update && sudo apt upgrade")
+            print("2. Install libcamera and picamera2:")
+            print("   sudo apt install -y python3-picamera2 libcamera-apps")
+            print("3. The Camera 3 works best with picamera2, NOT legacy picamera")
+        elif "Zero 2" in PI_MODEL:
             print("\nSpecific instructions for Raspberry Pi Zero 2W:")
             if IS_64BIT:
                 print("For 64-bit OS on Pi Zero 2W:")
@@ -132,7 +162,7 @@ except ImportError:
     # If PIL is not available, we'll fall back to OpenCV for image saving
     print("PIL (Pillow) not found, will try OpenCV for image saving if needed.")
 
-def takePhoto(resolution=(1920, 1080), output_file='images/input.png'):
+def takePhoto(resolution=DEFAULT_RESOLUTION, output_file='images/input.png'):
     """
     Captures a photo using the available Raspberry Pi camera library (picamera2 or legacy picamera).
     Saves the image to the specified output file.
@@ -171,14 +201,34 @@ def takePhoto(resolution=(1920, 1080), output_file='images/input.png'):
             picam2 = Picamera2()
             
             # Configure the camera for still capture
-            # Using lower resolution for Pi Zero 2W if detected to avoid memory issues
+            # Apply resolution optimizations based on detected hardware
             actual_resolution = resolution
-            if "Zero 2" in PI_MODEL and resolution[0] > 1280:
-                # Use a smaller resolution for Pi Zero 2W to conserve resources
-                actual_resolution = (1280, 720)
-                print(f"Reducing resolution to {actual_resolution} for Pi Zero 2W")
             
-            config = picam2.create_still_configuration(main={"size": actual_resolution})
+            # Special handling for Pi Camera 3
+            if PI_CAMERA_VERSION == 3:
+                # Camera 3 works best with specific configurations
+                print(f"Using optimized settings for Pi Camera 3")
+                # Use a modest resolution that works well with Camera 3
+                if resolution[0] > 640:
+                    actual_resolution = (640, 480)
+                    print(f"Using lower resolution {actual_resolution} for Camera 3 for better performance")
+                
+                # Create configuration with additional Camera 3 specific tuning
+                config = picam2.create_still_configuration(
+                    main={"size": actual_resolution},
+                    lores={"size": (320, 240)},  # Low-res stream for viewfinder
+                    display="lores",              # Use low-res for display
+                    buffer_count=1               # Minimize memory usage
+                )
+            elif "Zero" in PI_MODEL and resolution[0] > 800:
+                # Use a smaller resolution for Pi Zero to conserve resources
+                actual_resolution = (800, 600)
+                print(f"Reducing resolution to {actual_resolution} for Pi Zero")
+                config = picam2.create_still_configuration(main={"size": actual_resolution})
+            else:
+                # Standard configuration for other Pi models
+                config = picam2.create_still_configuration(main={"size": actual_resolution})
+                
             picam2.configure(config)
             
             # Start the camera
@@ -245,13 +295,21 @@ def takePhoto(resolution=(1920, 1080), output_file='images/input.png'):
     elif PICAMERA_LIB == "picamera":
         camera = None  # Ensure camera is defined for finally block
         try:
+            # Skip attempting to use legacy picamera with Camera 3
+            if PI_CAMERA_VERSION == 3:
+                print("WARNING: Raspberry Pi Camera 3 is not compatible with legacy picamera.")
+                print("Please install and use picamera2 instead:")
+                print("sudo apt update && sudo apt install -y python3-picamera2 libcamera-dev")
+                create_dummy_image(resolution, output_file)
+                return False
+                
             # Initialize the legacy camera
             camera = PiCamera()
             
-            # Use a lower resolution for Pi Zero to avoid memory issues
+            # Use a lower resolution for Pi Zero or if requested resolution is high
             actual_resolution = resolution
-            if "Zero" in PI_MODEL and resolution[0] > 1280:
-                actual_resolution = (1280, 720)
+            if "Zero" in PI_MODEL and resolution[0] > 800:
+                actual_resolution = (800, 600)
                 print(f"Reducing resolution to {actual_resolution} for Pi Zero")
             
             camera.resolution = actual_resolution
@@ -333,7 +391,7 @@ def takePhoto(resolution=(1920, 1080), output_file='images/input.png'):
         return False
 
 
-def create_dummy_image(resolution=(1920, 1080), output_file='images/input.png'):
+def create_dummy_image(resolution=(640, 480), output_file='images/input.png'):
     """Create a dummy black image when camera capture fails"""
     print(f"Creating a placeholder black image at {output_file}")
     try:
@@ -359,7 +417,7 @@ if __name__ == "__main__":
     print("Running takePhoto function directly...")
     
     # Check for custom resolution in arguments
-    resolution = (1920, 1080)  # Default
+    resolution = DEFAULT_RESOLUTION  # Use lower default resolution
     if len(sys.argv) > 1 and "," in sys.argv[1]:
         try:
             w, h = sys.argv[1].split(",")

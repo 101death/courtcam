@@ -30,17 +30,22 @@ import logging
 import subprocess
 import math
 
+# Default lower resolution for better performance on Raspberry Pi
+DEFAULT_CAMERA_RESOLUTION = (640, 480)  # Reduced resolution for better performance
+
 # Attempt to import camera module, handle failure gracefully
 try:
-    from camera import takePhoto
+    from camera import takePhoto, DEFAULT_RESOLUTION
     CAMERA_AVAILABLE = True
+    # Use the lower default resolution from camera.py if available
+    DEFAULT_CAMERA_RESOLUTION = DEFAULT_RESOLUTION
 except ImportError as e:
     print(f"Warning: Could not import camera module: {e}")
     print("Camera functionality will be disabled.")
     CAMERA_AVAILABLE = False
     
     # Define a dummy takePhoto function if the import fails
-    def takePhoto(resolution=(1920, 1080), output_file='images/input.png'):
+    def takePhoto(resolution=DEFAULT_CAMERA_RESOLUTION, output_file='images/input.png'):
         print(f"Camera not available. Skipping photo capture to {output_file}.")
         # Create a dummy black image as a placeholder if the file doesn't exist
         if not os.path.exists(output_file):
@@ -52,7 +57,7 @@ except ImportError as e:
                 cv2.imwrite(output_file, dummy_image)
             except Exception as write_error:
                 print(f"Error creating placeholder image: {write_error}")
-
+                
 # Global variables
 args = None  # Will store command-line arguments
 
@@ -2698,7 +2703,7 @@ if __name__ == "__main__":
              print("Camera explicitly disabled via --no-camera flag.")
              CAMERA_AVAILABLE = False
              # Redefine takePhoto as dummy if camera disabled late
-             def takePhoto(resolution=(1920, 1080), output_file='images/input.png'):
+             def takePhoto(resolution=DEFAULT_CAMERA_RESOLUTION, output_file='images/input.png'):
                  print(f"Camera disabled. Skipping photo capture to {output_file}.")
                  if not os.path.exists(output_file):
                      print(f"Creating placeholder image at {output_file}")
