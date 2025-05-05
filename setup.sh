@@ -15,6 +15,21 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
+# Spinner for long-running tasks
+spinner() {
+  local pid=$1
+  local delay=0.1
+  local spinstr='|/-\\'
+  printf ""
+  while kill -0 $pid 2>/dev/null; do
+    for i in {0..3}; do
+      printf "\r[%c]" "${spinstr:i:1}"
+      sleep $delay
+    done
+  done
+  printf "\r    \r"
+}
+
 # Banner
 echo -e "${BLUE}${BOLD}===============================================${NC}"
 echo -e "${BLUE}${BOLD}      Tennis Court Detection Setup Script      ${NC}"
@@ -40,13 +55,13 @@ fi
 # Create directories
 echo -e "${BOLD}Creating directories 'models/' and 'images/'...${NC}"
 mkdir -p models images
+echo -e "${GREEN}Directories ready${NC}\n"
 
-echo
 # Ensure Python3
 echo -e "${BOLD}Checking for Python 3...${NC}"
 if command -v python3 &>/dev/null; then
   PY=python3
-  echo -e "${GREEN}Python 3 found${NC}"
+  echo -e "${GREEN}Python 3 found${NC}\n"
 else
   echo -e "${RED}Python 3 is required. Please install and rerun.${NC}"; exit 1
 fi
@@ -58,57 +73,55 @@ VER=$($PY --version 2>&1)
 echo -e "${GREEN}Using $VER${NC}\n"
 
 # Virtual environment setup
-echo -e "${BOLD}Setting up Python virtual environment...${NC}"
-$PY -m venv --system-site-packages venv
-echo -e "${GREEN}Created venv directory${NC}"
-source venv/bin/activate
-echo -e "${GREEN}Activated virtual environment${NC}"
-pip install --upgrade pip setuptools wheel >/dev/null
-echo -e "${GREEN}Upgraded pip, setuptools, wheel${NC}\n"
+echo -ne "${BOLD}Creating venv...${NC}"
+$PY -m venv --system-site-packages venv >/dev/null 2>&1 & spinner $!
+echo -e " ${GREEN}Done${NC}"
+echo -ne "${BOLD}Activating venv...${NC}"
+source venv/bin/activate >/dev/null 2>&1
+echo -e " ${GREEN}Done${NC}"
+echo -ne "${BOLD}Upgrading pip...${NC}"
+pip install --upgrade pip setuptools wheel >/dev/null 2>&1 & spinner $!
+echo -e " ${GREEN}Done${NC}\n"
 
 # Raspberry Pi camera support
-echo -e "${BOLD}Installing Raspberry Pi camera support packages...${NC}"
+echo -ne "${BOLD}Installing camera packages...${NC}"
 if [ "$IS_PI" = true ]; then
-  sudo DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-picamera2 libcamera-dev python3-libcamera >/dev/null
-  echo -e "${GREEN}Camera support packages installed${NC}\n"
+  sudo DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null 2>&1
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-picamera2 libcamera-dev python3-libcamera >/dev/null 2>&1 & spinner $!
+  echo -e " ${GREEN}Done${NC}\n"
 else
-  echo -e "${YELLOW}Skipping Raspberry Pi camera packages${NC}\n"
+  echo -e "${YELLOW}Skipping camera packages${NC}\n"
 fi
 
 # Install common system packages
-echo -e "${BOLD}Installing common system packages...${NC}"
-sudo DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-opencv libopenblas-dev libatlas-base-dev libjpeg-dev libtiff5-dev libgl1-mesa-glx git curl >/dev/null
-echo -e "${GREEN}Common system packages installed${NC}\n"
+echo -ne "${BOLD}Installing system deps...${NC}"
+sudo DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null 2>&1
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-opencv libopenblas-dev libatlas-base-dev libjpeg-dev libtiff5-dev libgl1-mesa-glx git curl >/dev/null 2>&1 & spinner $!
+echo -e " ${GREEN}Done${NC}\n"
 
 # Install Python dependencies
-echo -e "${BOLD}Installing Python dependencies...${NC}"
+echo -ne "${BOLD}Installing Python deps...${NC}"
 if [ "$IS_PI" = true ]; then
-  # NumPy: pin for older Python, apt-get for newer
   if [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 10 ]; then
-    pip install numpy==1.19.5 >/dev/null
-    echo -e "${GREEN}Installed numpy==1.19.5${NC}"
+    pip install numpy==1.19.5 >/dev/null 2>&1
   else
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-numpy >/dev/null
-    echo -e "${GREEN}Installed numpy via apt-get${NC}"
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-numpy >/dev/null 2>&1
   fi
-  pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu >/dev/null
-  pip install opencv-python pandas shapely tqdm pillow matplotlib certifi >/dev/null
-  echo -e "${GREEN}Base Python packages installed${NC}"
-  read -p "Install Ultralytics (YOLOv8 support)? [y/N]: " Y8
-  if [[ $Y8 =~ ^[Yy] ]]; then
-    pip install ultralytics >/dev/null
-    echo -e "${GREEN}Ultralytics installed${NC}"
-  else
-    echo -e "${YELLOW}Skipping Ultralytics${NC}"
-  fi
+  pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu opencv-python pandas shapely tqdm pillow matplotlib certifi >/dev/null 2>&1 & spinner $!
 else
-  pip install -r requirements.txt >/dev/null
-  echo -e "${GREEN}Dependencies from requirements.txt installed${NC}"
+  pip install -r requirements.txt >/dev/null 2>&1 & spinner $!
 fi
+echo -e " ${GREEN}Done${NC}\n"
 
-echo
+# Optional Ultralytics
+echo -n "Install Ultralytics (YOLOv8)? [y/N]: "
+read -r Y8
+if [[ $Y8 =~ ^[Yy] ]]; then
+  echo -ne "Installing ultralytics..."
+  pip install ultralytics >/dev/null 2>&1 & spinner $!
+  echo -e " ${GREEN}Done${NC}\n"
+fifi
+
 # Interactive model downloads
 echo -e "${BOLD}Select YOLO models to download:${NC}"
 read -p "Download YOLOv5n? [Y/n]: " DO_Y5N; DO_Y5N=${DO_Y5N:-N}
@@ -118,11 +131,11 @@ read -p "Download YOLOv8n? [Y/n]: " DO_Y8N; DO_Y8N=${DO_Y8N:-Y}
 read -p "Download YOLOv8s? [Y/n]: " DO_Y8S; DO_Y8S=${DO_Y8S:-N}
 
 echo
-[[ $DO_Y5N =~ ^[Yy] ]] && { echo -e "${YELLOW}→ YOLOv5n...${NC}"; curl -sL https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5n.pt -o models/yolov5n.pt; echo -e "${GREEN}yolov5n.pt done${NC}"; }
-[[ $DO_Y5S =~ ^[Yy] ]] && { echo -e "${YELLOW}→ YOLOv5s...${NC}"; curl -sL https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -o models/yolov5s.pt; echo -e "${GREEN}yolov5s.pt done${NC}"; }
-[[ $DO_Y5M =~ ^[Yy] ]] && { echo -e "${YELLOW}→ YOLOv5m...${NC}"; curl -sL https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5m.pt -o models/yolov5m.pt; echo -e "${GREEN}yolov5m.pt done${NC}"; }
-[[ $DO_Y8N =~ ^[Yy] ]] && { echo -e "${YELLOW}→ YOLOv8n...${NC}"; curl -sL https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt -o models/yolov8n.pt; echo -e "${GREEN}yolov8n.pt done${NC}"; }
-[[ $DO_Y8S =~ ^[Yy] ]] && { echo -e "${YELLOW}→ YOLOv8s...${NC}"; curl -sL https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8s.pt -o models/yolov8s.pt; echo -e "${GREEN}yolov8s.pt done${NC}"; }
+[[ $DO_Y5N =~ ^[Yy] ]] && { echo -ne "Downloading YOLOv5n..."; curl -sL https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5n.pt -o models/yolov5n.pt & spinner $!; echo -e " ${GREEN}Done${NC}"; }
+[[ $DO_Y5S =~ ^[Yy] ]] && { echo -ne "Downloading YOLOv5s..."; curl -sL https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -o models/yolov5s.pt & spinner $!; echo -e " ${GREEN}Done${NC}"; }
+[[ $DO_Y5M =~ ^[Yy] ]] && { echo -ne "Downloading YOLOv5m..."; curl -sL https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5m.pt -o models/yolov5m.pt & spinner $!; echo -e " ${GREEN}Done${NC}"; }
+[[ $DO_Y8N =~ ^[Yy] ]] && { echo -ne "Downloading YOLOv8n..."; curl -sL https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt -o models/yolov8n.pt & spinner $!; echo -e " ${GREEN}Done${NC}"; }
+[[ $DO_Y8S =~ ^[Yy] ]] && { echo -ne "Downloading YOLOv8s..."; curl -sL https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8s.pt -o models/yolov8s.pt & spinner $!; echo -e " ${GREEN}Done${NC}"; }
 
 echo -e "${GREEN}Model downloads complete${NC}\n"
 
