@@ -129,7 +129,8 @@ class OutputManager:
             cls.warnings.append(message)
         elif level == "ERROR":
             cls.errors.append(message)
-            # Removed immediate error indicator print
+            # Print a concise error indicator immediately
+            cls._print_error_indicator()
             return
 
         # Determine if we should print the message based on verbosity settings

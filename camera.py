@@ -34,7 +34,7 @@ IS_64BIT = sys.maxsize > 2**32
 # Function to capture and format camera output
 def format_camera_output(func):
     """
-    Decorator to format camera output with consistent styling.
+    Decorator to format camera output with emojis and remove timestamps.
     """
     def wrapper(*args, **kwargs):
         # Capture stdout and stderr
@@ -49,7 +49,7 @@ def format_camera_output(func):
         stderr_output = stderr_buffer.getvalue()
         combined_output = stdout_output + stderr_output
         
-        # Filter and format the messages
+        # Filter and format the messages with emojis
         if combined_output:
             lines = combined_output.strip().split('\n')
             for line in lines:
@@ -57,22 +57,18 @@ def format_camera_output(func):
                 if not line.strip():
                     continue
                     
-                # Remove timestamps and process IDs
-                clean_line = re.sub(r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+', '', line)
-                
                 # Format based on message type
                 if 'ERROR' in line or 'Error' in line:
-                    from main import OutputManager
-                    OutputManager.log(clean_line, "ERROR")
+                    pattern = r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+'
+                    print(f"❌ {re.sub(pattern, '', line)}")
                 elif 'WARN' in line:
-                    from main import OutputManager
-                    OutputManager.log(clean_line, "WARNING")
+                    pattern = r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+'
+                    print(f"⚠️ {re.sub(pattern, '', line)}")
                 elif 'INFO' in line:
-                    from main import OutputManager
-                    OutputManager.log(clean_line, "INFO")
+                    pattern = r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+'
+                    print(f"ℹ️ {re.sub(pattern, '', line)}")
                 else:
-                    from main import OutputManager
-                    OutputManager.log(clean_line, "INFO")
+                    print(f"✓ {line}")
         
         return result
     
@@ -81,7 +77,7 @@ def format_camera_output(func):
 # Context manager version for inline usage
 class CameraOutputFormatter:
     """
-    Context manager to format camera output with consistent styling.
+    Context manager to format camera output with emojis.
     
     Usage example:
     with CameraOutputFormatter():
@@ -107,7 +103,7 @@ class CameraOutputFormatter:
         stderr_output = self.stderr_buffer.getvalue()
         combined_output = stdout_output + stderr_output
         
-        # Filter and format the messages
+        # Filter and format the messages with emojis
         if combined_output:
             lines = combined_output.strip().split('\n')
             for line in lines:
@@ -115,36 +111,30 @@ class CameraOutputFormatter:
                 if not line.strip():
                     continue
                     
-                # Remove timestamps and process IDs
-                clean_line = re.sub(r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+', '', line)
-                
                 # Format based on message type
                 if 'ERROR' in line or 'Error' in line:
-                    from main import OutputManager
-                    OutputManager.log(clean_line, "ERROR")
+                    pattern = r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+'
+                    print(f"❌ {re.sub(pattern, '', line)}")
                 elif 'WARN' in line:
-                    from main import OutputManager
-                    OutputManager.log(clean_line, "WARNING")
+                    pattern = r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+'
+                    print(f"⚠️ {re.sub(pattern, '', line)}")
                 elif 'INFO' in line:
-                    from main import OutputManager
-                    OutputManager.log(clean_line, "INFO")
+                    pattern = r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+'
+                    print(f"ℹ️ {re.sub(pattern, '', line)}")
                 else:
-                    from main import OutputManager
-                    OutputManager.log(clean_line, "INFO")
+                    print(f"✓ {line}")
 
 # Import camera modules conditionally
 try:
     from picamera2 import Picamera2
     PI_CAMERA_VERSION = 2
-    from main import OutputManager
-    OutputManager.log("Using picamera2 module", "INFO")
+    print("✓ Using picamera2 module")
 except ImportError:
     try:
         import picamera
         from picamera.array import PiRGBArray
         PI_CAMERA_VERSION = 1
-        from main import OutputManager
-        OutputManager.log("Using legacy picamera module", "INFO")
+        print("✓ Using legacy picamera module")
     except ImportError:
         PI_CAMERA_VERSION = None
         # No verbose output here - will be handled by main program
@@ -167,50 +157,38 @@ def takePhoto(resolution=DEFAULT_RESOLUTION, output_file='images/input.png'):
     
     # If not on Raspberry Pi or camera modules not available, return False
     if not IS_RASPBERRY_PI or PI_CAMERA_VERSION is None:
-        from main import OutputManager
-        OutputManager.log("Camera not available on this system", "WARNING")
         return False
 
     # Attempt to take photo using available camera module
     try:
         if PI_CAMERA_VERSION == 2:
             # PiCamera2 approach
-            from main import OutputManager
-            OutputManager.log("Initializing PiCamera2...", "INFO")
             camera = Picamera2()
             camera_config = camera.create_still_configuration(main={"size": resolution})
             camera.configure(camera_config)
             camera.start()
             time.sleep(1)  # Let camera warm up
-            OutputManager.log("Capturing photo...", "INFO")
             camera.capture_file(output_file)
             camera.close()
-            OutputManager.log(f"Photo saved to {output_file}", "SUCCESS")
             return True
             
         elif PI_CAMERA_VERSION == 1:
             # Legacy PiCamera approach
-            from main import OutputManager
-            OutputManager.log("Initializing legacy PiCamera...", "INFO")
             with picamera.PiCamera() as camera:
                 camera.resolution = resolution
                 camera.start_preview()
                 time.sleep(1)  # Let camera warm up
-                OutputManager.log("Capturing photo...", "INFO")
                 camera.capture(output_file)
-                OutputManager.log(f"Photo saved to {output_file}", "SUCCESS")
                 return True
     except Exception as e:
-        from main import OutputManager
-        OutputManager.log(f"Camera error: {str(e)}", "ERROR")
+        # No verbose output here - will be handled by main program
         return False
     
     return False
 
 # Example of calling the function (will run when this script is executed directly)
 if __name__ == "__main__":
-    from main import OutputManager
-    OutputManager.log("Running takePhoto function directly...", "INFO")
+    print("✓ Running takePhoto function directly...")
     
     # Check for custom resolution in arguments
     resolution = DEFAULT_RESOLUTION  # Use lower default resolution
@@ -218,13 +196,13 @@ if __name__ == "__main__":
         try:
             w, h = sys.argv[1].split(",")
             resolution = (int(w), int(h))
-            OutputManager.log(f"Using custom resolution: {resolution}", "INFO")
+            print(f"✓ Using custom resolution: {resolution}")
         except Exception as e:
-            OutputManager.log(f"Error parsing resolution: {e}", "ERROR")
+            print(f"❌ Error parsing resolution: {e}")
     
     success = takePhoto(resolution=resolution)
     if success:
-        OutputManager.log("Photo capture completed successfully", "SUCCESS")
+        print("✓ takePhoto function completed successfully.")
     else:
-        OutputManager.log("Photo capture failed", "ERROR")
+        print("❌ takePhoto function completed with errors.")
         sys.exit(1)

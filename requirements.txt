@@ -1,29 +1,21 @@
-# Core requirements (CPU-only for Raspberry Pi)
-torch>=1.7.0,<2.0.0          # CPU‑only build on aarch64
-torchvision>=0.8.0,<2.0.0   # CPU‑only build on aarch64
-
-# If you’re on x86_64 with CUDA, uncomment and adjust these:
-# torch>=1.13.1+cu117; platform_machine == "x86_64"
-# torchvision>=0.14.1+cu117; platform_machine == "x86_64"
-
-opencv-python>=4.5.0        # pip install on non‑Pi; on Pi use apt below
+# Core requirements
+torch>=1.7.0,<2.0.0
+torchvision>=0.8.0,<2.0.0
+opencv-python>=4.5.0
 numpy>=1.19.0
 pandas>=1.1.0
 shapely>=1.7.0
-
-# Optional for YOLOv8 and newer
+# Optional for YOLOv8 and newer models
 ultralytics>=8.0.0
-
 # Utilities
 tqdm>=4.41.0
 Pillow>=8.0.0
 matplotlib>=3.3.0
-
-# Camera support
-# • Raspberry Pi OS Buster (32‑bit PI): picamera via pip
-picamera>=1.13 ; python_version < "3.9" and platform_machine == "armv7l"
-# • Raspberry Pi OS Bullseye/Bookworm (64‑bit PI Zero 2W): install via apt
-#   sudo apt update && sudo apt install -y python3-picamera2 libcamera-dev python3-libcamera
-
-# SSL certificates
+# Camera support (choose based on your Raspberry Pi OS)
+# For Raspberry Pi OS Buster (Legacy)
+picamera>=1.13 ; python_version < '3.9'
+# For Raspberry Pi OS Bullseye/Bookworm
+# Note: picamera2 is typically installed via apt and not pip
+# sudo apt install -y python3-picamera2 libcamera-dev
+# Additional dependencies for Raspberry Pi
 certifi>=2020.6.20
