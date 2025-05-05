@@ -374,6 +374,23 @@ class OutputManager:
         # Get symbol based on message level
         symbol = cls.SYMBOLS.get(level, "")
         
+        # Check if we can use Unicode symbols
+        try:
+            if symbol:
+                symbol.encode(sys.stdout.encoding)
+        except (UnicodeEncodeError, AttributeError):
+            # Fallback to ASCII symbols
+            ascii_symbols = {
+                "INFO": "i",
+                "SUCCESS": "+",
+                "WARNING": "!",
+                "ERROR": "x",
+                "DEBUG": ".",
+                "FATAL": "!!",
+                "STATUS": ">",
+            }
+            symbol = ascii_symbols.get(level, "")
+        
         # Format the message with appropriate styling
         formatted_message = f"{timestamp}{color}{symbol} {message}{cls.RESET}"
         
@@ -406,15 +423,30 @@ class OutputManager:
     @classmethod
     def animate(cls, message, is_progress=False, total=20):
         """
-        Display a simple spinning animation next to text
+        Display a smooth spinning animation next to text
         
         Args:
             message: Message to display with the animation
             is_progress: Ignored (maintained for compatibility)
             total: Ignored (maintained for compatibility)
         """
-        # Classic spinning animation with clear visibility
-        frames = ["|", "/", "-", "\\"]
+        # Enhanced spinner animation with more frames for smoother appearance
+        frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        
+        # Fallback frames for terminals that might not support Unicode well
+        fallback_frames = ["|", "/", "-", "\\"]
+        
+        # Try to detect if terminal supports Unicode properly
+        use_unicode = True
+        try:
+            # Check if we can encode the Unicode characters
+            for frame in frames:
+                frame.encode(sys.stdout.encoding)
+        except (UnicodeEncodeError, AttributeError):
+            use_unicode = False
+        
+        # Choose appropriate frame set
+        spinner_frames = frames if use_unicode else fallback_frames
         
         def animate():
             idx = 0
@@ -422,7 +454,7 @@ class OutputManager:
             # Continue spinning until stopped
             while not cls._stop_animation and cls._animation_active:
                 # Get the current frame
-                frame = frames[idx % len(frames)]
+                frame = spinner_frames[idx % len(spinner_frames)]
                 
                 # Format timestamp with consistent width
                 timestamp = ""
@@ -434,7 +466,7 @@ class OutputManager:
                 sys.stdout.flush()
                 
                 # Update the index for next frame and sleep briefly
-                idx = (idx + 1) % len(frames)
+                idx = (idx + 1) % len(spinner_frames)
                 time.sleep(0.08)  # Fast animation for clear spinning movement
         
         # Run the animation in a separate thread
@@ -489,7 +521,7 @@ class OutputManager:
     @classmethod
     def fancy_summary(cls, title, content, processing_time=None):
         """
-        Display a fancy boxed summary with animations
+        Display a fancy boxed summary with consistent formatting
         
         Args:
             title: Title of the summary box
@@ -501,25 +533,33 @@ class OutputManager:
         
         # Helper function to wrap text by words
         def wrap_text(text, width):
+            # First remove any ANSI color codes for length calculation
+            ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+            clean_text = ansi_escape.sub('', text)
+            
             words = text.split()
             lines = []
             current_line = []
             current_length = 0
             
             for word in words:
-                if current_length + len(word) + (1 if current_length > 0 else 0) <= width:
+                # Calculate word length without ANSI codes
+                clean_word = ansi_escape.sub('', word)
+                word_length = len(clean_word)
+                
+                if current_length + word_length + (1 if current_length > 0 else 0) <= width:
                     # Add word to current line
                     if current_length > 0:
                         current_length += 1  # For the space
                         current_line.append(" ")
                     current_line.append(word)
-                    current_length += len(word)
+                    current_length += word_length
                 else:
                     # Line is full, start a new one
                     if current_line:
                         lines.append("".join(current_line))
                     current_line = [word]
-                    current_length = len(word)
+                    current_length = word_length
             
             # Add the last line if it exists
             if current_line:
@@ -528,8 +568,11 @@ class OutputManager:
             return lines
         
         # Process the content
-        max_width = 70  # Maximum characters per line
+        max_width = 78  # Maximum characters per line (increased for better usage of terminal width)
         content_lines = []
+        
+        # Check if string contains ANSI escape sequences
+        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
         
         if isinstance(content, str):
             # Split the content by newlines first
@@ -555,53 +598,81 @@ class OutputManager:
             content_lines.append("")
             content_lines.append(f"Processing time: {processing_time:.2f} seconds")
         
-        # Calculate box width based on content
-        content_width = max(len(line) for line in content_lines) if content_lines else 0
-        box_width = max(content_width + 4, len(title) + 10, 50)
+        # Calculate box width based on content, accounting for ANSI escape codes
+        def visual_length(s):
+            return len(ansi_escape.sub('', s))
+            
+        content_width = max(visual_length(line) for line in content_lines) if content_lines else 0
+        box_width = max(content_width + 4, visual_length(title) + 10, 60)
         
-        # Box drawing characters
-        top_left = "╭"
-        top_right = "╮"
-        bottom_left = "╰"
-        bottom_right = "╯"
-        horizontal = "─"
-        vertical = "│"
+        # Try to detect terminal width
+        try:
+            terminal_width, _ = os.get_terminal_size()
+            # Limit box width to terminal width - 2
+            box_width = min(box_width, terminal_width - 2)
+        except (AttributeError, OSError):
+            # If we can't get terminal width, use default
+            pass
+        
+        # Choose box drawing characters based on terminal capability
+        try:
+            # Test if terminal can display Unicode box drawing characters
+            "│".encode(sys.stdout.encoding)
+            # Box drawing characters (Unicode)
+            top_left = "╭"
+            top_right = "╮"
+            bottom_left = "╰"
+            bottom_right = "╯"
+            horizontal = "─"
+            vertical = "│"
+            t_right = "├"
+            t_left = "┤"
+        except (UnicodeEncodeError, AttributeError):
+            # Fallback to ASCII box characters
+            top_left = "+"
+            top_right = "+"
+            bottom_left = "+"
+            bottom_right = "+"
+            horizontal = "-"
+            vertical = "|"
+            t_right = "+"
+            t_left = "+"
         
         # Build the box parts
         top_border = f"{top_left}{horizontal * (box_width - 2)}{top_right}"
         title_line = f"{vertical} {cls.BOLD}{title.center(box_width - 4)}{cls.RESET} {vertical}"
-        divider = f"├{horizontal * (box_width - 2)}┤"
+        divider = f"{t_right}{horizontal * (box_width - 2)}{t_left}"
         empty_line = f"{vertical}{' ' * (box_width - 2)}{vertical}"
         bottom_border = f"{bottom_left}{horizontal * (box_width - 2)}{bottom_right}"
         
-        # Display the summary box with animation
-        def display_box():
-            # Print top border
-            print(top_border)
-            
-            # Print title
-            print(title_line)
-            
-            # Print divider
-            print(divider)
-            
-            # Print empty line
-            print(empty_line)
-            
-            # Print content
-            for line in content_lines:
-                # Pad the line to fit the box
-                padded_line = line.ljust(box_width - 4)[:box_width - 4]
-                print(f"{vertical} {padded_line} {vertical}")
-            
-            # Print empty line
-            print(empty_line)
-            
-            # Print bottom border
-            print(bottom_border)
+        # Display the summary box
+        # First clear any existing content
+        sys.stdout.write("\r\033[K")
+        sys.stdout.flush()
         
-        # Display the box
-        display_box()
+        print(top_border)
+        print(title_line)
+        print(divider)
+        print(empty_line)
+        
+        # Print content with proper handling of ANSI escape codes
+        for line in content_lines:
+            # Get visual length of the line (excluding ANSI codes)
+            vis_len = visual_length(line)
+            # Calculate padding needed
+            padding = box_width - 4 - vis_len
+            # Format the line with proper padding
+            if padding >= 0:
+                print(f"{vertical} {line}{' ' * padding} {vertical}")
+            else:
+                # Line is too long, truncate
+                print(f"{vertical} {line[:box_width - 4]} {vertical}")
+        
+        print(empty_line)
+        print(bottom_border)
+        
+        # Ensure output is displayed immediately
+        sys.stdout.flush()
     
     @classmethod
     def create_final_summary(cls, people_count, court_counts, output_path=None, processing_time=None, total_courts=None):
