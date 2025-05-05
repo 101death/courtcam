@@ -59,11 +59,14 @@ def format_camera_output(func):
                     
                 # Format based on message type
                 if 'ERROR' in line or 'Error' in line:
-                    print(f"❌ {re.sub(r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+', '', line)}")
+                    pattern = r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+'
+                    print(f"❌ {re.sub(pattern, '', line)}")
                 elif 'WARN' in line:
-                    print(f"⚠️ {re.sub(r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+', '', line)}")
+                    pattern = r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+'
+                    print(f"⚠️ {re.sub(pattern, '', line)}")
                 elif 'INFO' in line:
-                    print(f"ℹ️ {re.sub(r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+', '', line)}")
+                    pattern = r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+'
+                    print(f"ℹ️ {re.sub(pattern, '', line)}")
                 else:
                     print(f"✓ {line}")
         
@@ -110,11 +113,14 @@ class CameraOutputFormatter:
                     
                 # Format based on message type
                 if 'ERROR' in line or 'Error' in line:
-                    print(f"❌ {re.sub(r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+', '', line)}")
+                    pattern = r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+'
+                    print(f"❌ {re.sub(pattern, '', line)}")
                 elif 'WARN' in line:
-                    print(f"⚠️ {re.sub(r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+', '', line)}")
+                    pattern = r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+'
+                    print(f"⚠️ {re.sub(pattern, '', line)}")
                 elif 'INFO' in line:
-                    print(f"ℹ️ {re.sub(r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+', '', line)}")
+                    pattern = r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+'
+                    print(f"ℹ️ {re.sub(pattern, '', line)}")
                 else:
                     print(f"✓ {line}")
 
