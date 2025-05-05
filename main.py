@@ -422,16 +422,36 @@ def detect_courts(image):
 
 def parse_arguments():
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description="Tennis Court Detector")
+    parser = argparse.ArgumentParser(
+        description="Tennis Court Detector - Detects people on tennis courts using YOLO models",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python main.py                    # Run with default settings
+  python main.py --verbose          # Enable detailed output
+  python main.py --input-image path/to/image.jpg  # Process specific image
+  python main.py --no-camera        # Disable camera usage
+"""
+    )
     
-    # Basic options
-    parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
-    parser.add_argument("--super-quiet", action="store_true", help="Minimal output, only show final summary")
-    parser.add_argument("--no-camera", action="store_true", help="Disable camera usage (useful for testing without hardware)")
-    parser.add_argument("--input-image", type=str, help="Path to input image (bypasses camera capture)")
+    # Output control group
+    output_group = parser.add_argument_group('Output Control')
+    output_group.add_argument("--verbose", action="store_true", 
+                            help="Enable detailed output messages")
+    output_group.add_argument("--super-quiet", action="store_true", 
+                            help="Minimal output, only show final summary")
     
-    # Model options
-    parser.add_argument("--model", type=str, default=Config.Model.NAME, help=f"YOLO model name (default: {Config.Model.NAME})")
+    # Input options group
+    input_group = parser.add_argument_group('Input Options')
+    input_group.add_argument("--no-camera", action="store_true", 
+                           help="Disable camera usage (useful for testing without hardware)")
+    input_group.add_argument("--input-image", type=str, metavar="PATH",
+                           help="Path to input image (bypasses camera capture)")
+    
+    # Model options group
+    model_group = parser.add_argument_group('Model Options')
+    model_group.add_argument("--model", type=str, default=Config.Model.NAME,
+                           help=f"YOLO model name (default: {Config.Model.NAME})")
     
     return parser.parse_args()
 
