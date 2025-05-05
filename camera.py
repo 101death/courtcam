@@ -66,9 +66,23 @@ if IS_RASPBERRY_PI:
 # Attempt to import PiCamera libraries, handle multiple possibilities
 try:
     # Try picamera2 first (preferred for Raspberry Pi OS Bullseye/Bookworm and 64-bit systems)
-    from picamera2 import Picamera2, Preview # type: ignore
-    PICAMERA_LIB = "picamera2"
-    print("Using picamera2 library (recommended for Raspberry Pi OS Bullseye/Bookworm)")
+    try:
+        from picamera2 import Picamera2, Preview # type: ignore
+        PICAMERA_LIB = "picamera2"
+        print("Using picamera2 library (recommended for Raspberry Pi OS Bullseye/Bookworm)")
+    except ValueError as ve:
+        # Handle the specific numpy binary incompatibility error
+        if "numpy.dtype size changed" in str(ve):
+            camera_errors.append(f"NumPy binary incompatibility error with picamera2: {str(ve)}")
+            print("NumPy version incompatibility detected. This typically happens when using virtual environments.")
+            print("Options to fix:")
+            print("1. Deactivate your virtual environment: run 'deactivate' and try again")
+            print("2. Install a compatible NumPy version: pip install numpy==1.19.5")
+            print("Falling back to other camera methods...")
+            raise ImportError("NumPy compatibility issue with picamera2")
+        else:
+            # Re-raise if it's a different ValueError
+            raise
 except ImportError as e:
     camera_errors.append(f"picamera2 import error: {str(e)}")
     print(f"Could not import picamera2: {e}")
