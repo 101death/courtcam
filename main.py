@@ -497,34 +497,23 @@ def get_model_path(model_name):
     try:
         # Suppress output during download
         with suppress_stdout_stderr():
-            if model_name.startswith("yolov5"):
-                # For YOLOv5 models, we need to use torch.hub
-                import torch
-                model = torch.hub.load('ultralytics/yolov5', model_name)
-                torch.save(model.state_dict(), model_path)
+            from ultralytics import YOLO
+            model = YOLO(model_name)
+            model.export(format="pt")  # Export to PyTorch format
+            
+            # Move the downloaded model to our models directory
+            downloaded_path = f"{model_name}.pt"
+            if os.path.exists(downloaded_path):
+                os.makedirs(Config.Paths.MODELS_DIR, exist_ok=True)
+                shutil.move(downloaded_path, model_path)
                 return model_path
-            else:
-                # For YOLOv8 models, use ultralytics
-                from ultralytics import YOLO
-                model = YOLO(model_name)
-                model.export(format="pt")  # Export to PyTorch format
-                
-                # Move the downloaded model to our models directory
-                downloaded_path = f"{model_name}.pt"
-                if os.path.exists(downloaded_path):
-                    os.makedirs(Config.Paths.MODELS_DIR, exist_ok=True)
-                    shutil.move(downloaded_path, model_path)
-                    return model_path
-    except ImportError as e:
-        if "ultralytics" in str(e):
-            OutputManager.log("Error: ultralytics package not found. Please install it using: pip install ultralytics", "ERROR")
-        else:
-            OutputManager.log(f"Error: Required package not found: {str(e)}", "ERROR")
+    except ImportError:
+        OutputManager.log("Error: ultralytics package not found. Please install it using: pip install ultralytics", "ERROR")
         return None
     except Exception as e:
         error_msg = str(e)
         if "not found" in error_msg.lower():
-            OutputManager.log(f"Error: Model '{model_name}' not found in the repository", "ERROR")
+            OutputManager.log(f"Error: Model '{model_name}' not found in the ultralytics repository", "ERROR")
         elif "permission denied" in error_msg.lower():
             OutputManager.log(f"Error: Permission denied when trying to download model. Please check write permissions in {Config.Paths.MODELS_DIR}", "ERROR")
         else:
@@ -565,9 +554,7 @@ def select_model():
                 
             idx = int(choice) - 1
             if 0 <= idx < len(Config.Model.AVAILABLE_MODELS):
-                selected_model = Config.Model.AVAILABLE_MODELS[idx]
-                print(f"\nSelected model: {selected_model}")
-                return selected_model
+                return Config.Model.AVAILABLE_MODELS[idx]
             else:
                 print(f"\nInvalid selection. Please choose a number between 1 and {len(Config.Model.AVAILABLE_MODELS)}")
         except ValueError:
@@ -579,7 +566,6 @@ def ensure_model_available(model_name):
     model_path = get_model_path(model_name)
     
     if model_path:
-        OutputManager.log(f"Model {model_name} is available at {model_path}", "SUCCESS")
         return model_path
         
     # If download failed, let user select a different model
@@ -593,10 +579,7 @@ def ensure_model_available(model_name):
         OutputManager.log("No model selected. Exiting.", "ERROR")
         return None
         
-    model_path = get_model_path(new_model)
-    if model_path:
-        OutputManager.log(f"Successfully downloaded {new_model}", "SUCCESS")
-    return model_path
+    return get_model_path(new_model)
 
 def main():
     """Main function."""
