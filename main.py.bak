@@ -3,11 +3,11 @@
 Tennis Court Detector - Detects people on tennis courts using YOLOv5
 """
 import os
-import cv2 # type: ignore
-import numpy as np # type: ignore
+import cv2
+import numpy as np
 import json
-import torch # type: ignore
-from shapely.geometry import Polygon, Point # type: ignore
+import torch
+from shapely.geometry import Polygon, Point
 import sys
 import ssl
 import argparse
@@ -114,6 +114,7 @@ class Config:
         INPUT_IMAGE = "input.png"
         OUTPUT_IMAGE = "output.png"
         MODELS_DIR = "models"
+        OUTPUT_DIR = "images"
         
         @classmethod
         def input_path(cls):
@@ -130,7 +131,7 @@ class Config:
     # Model settings
     class Model:
         NAME = "yolov8n"             # YOLOv5 model size (yolov5s, yolov5m, yolov5l, etc.)
-        CONFIDENCE = 0.1             # Detection confidence threshold (lowered from 0.3)
+        CONFIDENCE = 0.25            # Detection confidence threshold
         IOU = 0.45                   # IoU threshold
         CLASSES = [0]                # Only detect people (class 0)
         
@@ -211,55 +212,71 @@ class Config:
             # Default to yolov5s if model not found
             OutputManager.log(f"Model {model_name} not found in known models. Defaulting to yolov5s.", "WARNING")
             return cls.MODEL_URLS["yolov5s"]
+        
+        AVAILABLE_MODELS = [
+            "yolov5n",  # nano
+            "yolov5s",  # small
+            "yolov5m",  # medium
+            "yolov5l",  # large
+            "yolov5x",  # xlarge
+            "yolov8n",  # nano
+            "yolov8s",  # small
+            "yolov8m",  # medium
+            "yolov8l",  # large
+            "yolov8x",  # xlarge
+        ]
     
     # Multiprocessing settings
     class MultiProcessing:
-        ENABLED = True              # Enable multiprocessing
-        NUM_PROCESSES = 4           # Number of CPU cores to use
+        ENABLED = True              
+        NUM_PROCESSES = max(1, cpu_count() - 1)  # Use all cores except one
         CHUNK_SIZE = 125             # Chunk size for processing
 
 # Default lower resolution for better performance on Raspberry Pi
 DEFAULT_CAMERA_RESOLUTION = (640, 480)  # Reduced resolution for better performance
 
-# Attempt to import camera module, handle failure gracefully
-try:
-    from camera import takePhoto, DEFAULT_RESOLUTION
-    CAMERA_AVAILABLE = True
-    # Use the lower default resolution from camera.py if available
-    DEFAULT_CAMERA_RESOLUTION = DEFAULT_RESOLUTION
-except ImportError as e:
-    if Config.Output.VERBOSE:
-        print(f"Warning: Could not import camera module: {e}")
-        print("Camera functionality will be disabled.")
-    CAMERA_AVAILABLE = False
-    
-    # Define dummy takePhoto function
-    def takePhoto(resolution=DEFAULT_CAMERA_RESOLUTION, output_file='images/input.png'):
-        if Config.Output.VERBOSE:
-            print(f"Camera not available. Skipping photo capture to {output_file}.")
-        return False
-    
 # Global variables
-args = None  # Will store command-line arguments
-
-# Check if ultralytics is installed for YOLOv8 models
-try:
-    import ultralytics # type: ignore
-    ULTRALYTICS_AVAILABLE = True
-except ImportError:
-    ULTRALYTICS_AVAILABLE = False
+CAMERA_AVAILABLE = False
 
 # Fix macOS SSL certificate issues
 if sys.platform == 'darwin':
     # Check if we're running on macOS and set default SSL context
     try:
         # Try to import certifi for better certificate handling
-        import certifi # type: ignore
+        import certifi
         ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
     except ImportError:
         # If certifi isn't available, try the default macOS certificate location
         ssl._create_default_https_context = lambda: ssl.create_default_context()
 
+# Check if ultralytics is installed for YOLOv8 models
+try:
+    import ultralytics
+    ULTRALYTICS_AVAILABLE = True
+except ImportError:
+    ULTRALYTICS_AVAILABLE = False
+
+# Try to import camera module
+try:
+    from camera import takePhoto, DEFAULT_RESOLUTION, CameraOutputFormatter
+    CAMERA_AVAILABLE = True
+    DEFAULT_CAMERA_RESOLUTION = DEFAULT_RESOLUTION
+except ImportError:
+    # Define dummy takePhoto function when camera is not available
+    def takePhoto(resolution=DEFAULT_CAMERA_RESOLUTION, output_file='images/input.png'):
+        return False
+    
+    # Define dummy CameraOutputFormatter class when camera module is not available
+    class CameraOutputFormatter:
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+# Global variables
+args = None  # Will store command-line arguments
+
+# Output manager for centralized output handling
 class OutputManager:
     """
     Centralized output manager for all terminal output.
@@ -499,52 +516,50 @@ class OutputManager:
         # Core result summary
         if not cls.errors:
             if people_count is not None:
-                court_msg = f"{total_courts} court(s)" if total_courts is not None else "Courts"
-                people_msg = f"{people_count} person(s)" if people_count is not None else "People"
-                summary_lines.append(f"{court_msg} and {people_msg} detected.")
+                people_text = f"{people_count} person{'s' if people_count != 1 else ''}"
+                court_text = f"{total_courts} court{'s' if total_courts != 1 else ''}" if total_courts is not None else "No courts"
+                
+                summary_lines.append(f"{cls.BOLD}{people_text}{cls.RESET} detected on {cls.BOLD}{court_text}{cls.RESET}")
 
                 # Add court details if people were found on courts
                 if court_counts:
-                    details = []
+                    court_details = []
                     for court_num, count in sorted(court_counts.items()):
-                        details.append(f"{count} on C{court_num}")
-                    if details:
-                        summary_lines.append(f"  • Locations: {', '.join(details)}")
+                        court_details.append(f"C{court_num}: {count}")
+                    summary_lines.append(f"Distribution: {', '.join(court_details)}")
             else: 
-                # Handle successful run with no people/courts
-                summary_lines.append("No courts or people detected.")
+                summary_lines.append(f"{cls.BOLD}No detections{cls.RESET}")
         else:
             # Error summary
-            summary_lines.append(f"{cls.RED}Processing failed due to errors.{cls.RESET}")
+            summary_lines.append(f"{cls.RED}{cls.BOLD}Processing failed{cls.RESET}")
 
         # Add output path if generated
         if output_path and not cls.errors:
-            summary_lines.append(f"Output image saved: {output_path}")
+            summary_lines.append(f"Output: {os.path.basename(output_path)}")
 
         # Add Errors Section
         if cls.errors:
-            summary_lines.append("") # Add spacing
-            summary_lines.append(f"{cls.RED}{cls.BOLD}ERRORS:{cls.RESET}")
-            for i, error in enumerate(cls.errors):
-                # Keep error messages concise for the summary box
-                error_short = str(error).split('\n')[0] # Get first line of error
-                summary_lines.append(f" - {error_short[:70]}{'...' if len(error_short) > 70 else ''}")
+            summary_lines.append("") 
+            summary_lines.append(f"{cls.RED}ERRORS:{cls.RESET}")
+            for i, error in enumerate(cls.errors, 1):
+                error_short = str(error).split('\n')[0]  # Get first line
+                summary_lines.append(f" {i}. {error_short[:70]}{'...' if len(error_short) > 70 else ''}")
             
-            # Add Troubleshooting Section separately if fixes exist
+            # Add troubleshooting suggestions if there are errors
             error_fixes = cls.get_potential_fixes()
             if error_fixes:
                 summary_lines.append("")
-                summary_lines.append(f"{cls.YELLOW}{cls.BOLD}TROUBLESHOOTING:{cls.RESET}")
+                summary_lines.append(f"{cls.YELLOW}TROUBLESHOOTING:{cls.RESET}")
                 # Add fixes line by line for wrapping
                 for line in error_fixes.split('\n'):
                     summary_lines.append(line)
         
         # Add Warnings Section (only if no errors)
         elif cls.warnings:
-            summary_lines.append("") # Add spacing
-            summary_lines.append(f"{cls.YELLOW}{cls.BOLD}WARNINGS / NOTES:{cls.RESET}")
-            for warning in cls.warnings:
-                summary_lines.append(f" - {warning}")
+            summary_lines.append("") 
+            summary_lines.append(f"{cls.YELLOW}WARNINGS:{cls.RESET}")
+            for i, warning in enumerate(cls.warnings, 1):
+                summary_lines.append(f" {i}. {warning}")
 
         return "\n".join(summary_lines)
 
@@ -1334,7 +1349,7 @@ def main():
                     total_courts=0
                 )
                 print_error_summary(final_summary)
-                return 1
+                sys.exit(1)
         except Exception as e:
             OutputManager.log(f"Problem loading the image: {str(e)}", "ERROR")
             processing_time = time.time() - start_time
@@ -1346,7 +1361,7 @@ def main():
                 total_courts=0
             )
             print_error_summary(final_summary)
-            return 1
+            sys.exit(1)
         
         # Set up debug folder
         try:
@@ -1871,27 +1886,27 @@ def main():
                                                 'bbox': (x1, y1, x2, y2),
                                                 'confidence': conf
                                             })
-                    else:
-                        # YOLOv5 results format - using pandas
-                        df = results.pandas().xyxy[0]
-                        df = df[df['class'] == 0]
-                        
-                        for _, row in df.iterrows():
-                            x1, y1, x2, y2 = int(row['xmin']), int(row['ymin']), int(row['xmax']), int(row['ymax'])
+                        else:
+                            # YOLOv5 results format - using pandas
+                            df = results.pandas().xyxy[0]
+                            df = df[df['class'] == 0]
                             
-                            # Calculate center point and foot position
-                            center_x = (x1 + x2) // 2
-                            center_y = (y1 + y2) // 2
-                            foot_x = center_x
-                            foot_y = y2  # Bottom of bounding box represents feet
-                            
-                            # Add to people list
-                            people.append({
-                                'position': (center_x, center_y),
-                                'foot_position': (foot_x, foot_y),
-                                'bbox': (x1, y1, x2, y2),
-                                'confidence': row['confidence']
-                            })
+                            for _, row in df.iterrows():
+                                x1, y1, x2, y2 = int(row['xmin']), int(row['ymin']), int(row['xmax']), int(row['ymax'])
+                                
+                                # Calculate center point and foot position
+                                center_x = (x1 + x2) // 2
+                                center_y = (y1 + y2) // 2
+                                foot_x = center_x
+                                foot_y = y2  # Bottom of bounding box represents feet
+                                
+                                # Add to people list
+                                people.append({
+                                    'position': (center_x, center_y),
+                                    'foot_position': (foot_x, foot_y),
+                                    'bbox': (x1, y1, x2, y2),
+                                    'confidence': row['confidence']
+                                })
                 except Exception as e:
                     error_msg = str(e)
                     
@@ -2127,9 +2142,9 @@ def main():
         
         # If there were errors that didn't cause a fatal exit, still indicate an error status
         if OutputManager.errors:
-            return 1
+            sys.exit(1)
         
-        return 0
+        sys.exit(0)
     except Exception as e:
         # This is the main catch-all for any unhandled exceptions in the try block
         OutputManager.log(f"Unhandled error in main function: {str(e)}", "ERROR")
@@ -2144,14 +2159,14 @@ def main():
             total_courts=0
         )
         print_error_summary(final_summary)
-        return 1
+        sys.exit(1)
 
 # Add a backward compatibility wrapper for the old log function
 def log(message, level="INFO"):
     """Wrapper for backward compatibility with the old log function"""
     OutputManager.log(message, level)
 
-def print_error_summary(summary):
+def print_error_summary(final_summary):
     """Print summary using fancy_summary, handling errors and warnings"""
     # First clear any lingering output
     sys.stdout.write("\r\033[K")
@@ -2159,12 +2174,12 @@ def print_error_summary(summary):
     
     # Use the fancy summary with appropriate title
     if OutputManager.errors:
-        OutputManager.fancy_summary("ERROR SUMMARY", summary)
+        OutputManager.fancy_summary("ERROR SUMMARY", final_summary)
     elif OutputManager.warnings:
-        OutputManager.fancy_summary("WARNING SUMMARY", summary)
+        OutputManager.fancy_summary("WARNING SUMMARY", final_summary)
     else:
         # If no errors or warnings, but called, print a general summary
-        OutputManager.fancy_summary("PROCESS SUMMARY", summary)
+        OutputManager.fancy_summary("PROCESS SUMMARY", final_summary)
     
     # Flush to ensure immediate display
     sys.stdout.flush()
@@ -2197,7 +2212,7 @@ def download_yolo_model(model_name, url=None, disable_ssl_verify=False):
         elif sys.platform == 'darwin':  # macOS specific fix
             # On macOS, install certificates if needed
             try:
-                import certifi # type: ignore
+                import certifi
                 ssl_context = ssl.create_default_context(cafile=certifi.where())
             except ImportError:
                 # If certifi is not installed, try to use macOS certificates
@@ -2389,6 +2404,92 @@ def test_yolov8_detector(image_path, model_name="yolov8x.pt", confidence=0.15, v
     # Return the people list for use in main.py
     return people
 
+def detect_people(image_path, model_path="models/yolov8n.pt"):
+    """
+    Detect people in an image using the YOLO model.
+    Returns list of detected people and the loaded image.
+    """
+    try:
+        # Load the image
+        image = cv2.imread(image_path)
+        if image is None:
+            OutputManager.log(f"Failed to load image from {image_path}", "ERROR")
+            return [], None
+        
+        # Check if we can use ultralytics for YOLOv8+ models
+        is_v8_or_newer = False
+        for v in range(8, 20):
+            if f"yolov{v}" in model_path.lower():
+                is_v8_or_newer = True
+                break
+                
+        if is_v8_or_newer and ULTRALYTICS_AVAILABLE:
+            try:
+                # Use ultralytics API for YOLOv8+ models
+                from ultralytics import YOLO
+                model = YOLO(model_path)
+                
+                # Use the specialized function for ultralytics models
+                return detect_people_ultralytics(model, image, confidence=Config.Model.CONFIDENCE), image
+            except Exception as e:
+                OutputManager.log(f"Error using ultralytics API: {str(e)}", "ERROR")
+                # Fall back to default processing
+        
+        # Load YOLO model using torch hub
+        try:
+            with suppress_stdout_stderr():
+                model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path, verbose=False)
+                model.conf = Config.Model.CONFIDENCE
+                model.classes = [0]  # Only detect people
+        except Exception as e:
+            OutputManager.log(f"Error loading YOLO model: {str(e)}", "ERROR")
+            return [], image
+        
+        # Run detection
+        try:
+            with suppress_stdout_stderr():
+                results = model(image)
+            
+            # Process results
+            people = []
+            try:
+                # Extract detections from pandas dataframe
+                df = results.pandas().xyxy[0]
+                df = df[df['class'] == 0]  # Only keep people (class 0)
+                
+                for _, row in df.iterrows():
+                    x1, y1, x2, y2 = int(row['xmin']), int(row['ymin']), int(row['xmax']), int(row['ymax'])
+                    confidence = float(row['confidence'])
+                    
+                    # Calculate center point and foot position
+                    center_x = (x1 + x2) // 2
+                    center_y = (y1 + y2) // 2
+                    foot_x = center_x
+                    foot_y = y2  # Bottom of bounding box represents feet
+                    
+                    # Add to people list
+                    people.append({
+                        'position': (center_x, center_y),
+                        'foot_position': (foot_x, foot_y),
+                        'bbox': (x1, y1, x2, y2),
+                        'confidence': confidence
+                    })
+                
+                OutputManager.log(f"Found {len(people)} people in the image", "SUCCESS")
+                return people, image
+                
+            except Exception as e:
+                OutputManager.log(f"Error processing detection results: {str(e)}", "ERROR")
+                return [], image
+                
+        except Exception as e:
+            OutputManager.log(f"Error running detection: {str(e)}", "ERROR")
+            return [], image
+            
+    except Exception as e:
+        OutputManager.log(f"Error in person detection: {str(e)}", "ERROR")
+        return [], None
+
 if __name__ == "__main__":
     try:
         # Add command-line arguments for easier use
@@ -2548,7 +2649,7 @@ if __name__ == "__main__":
                         total_courts=0
                     )
                     print_error_summary(final_summary)
-                    return 1
+                    sys.exit(1)
             except Exception as e:
                 OutputManager.log(f"Problem loading the image: {str(e)}", "ERROR")
                 processing_time = time.time() - start_time
@@ -2560,7 +2661,7 @@ if __name__ == "__main__":
                     total_courts=0
                 )
                 print_error_summary(final_summary)
-                return 1
+                sys.exit(1)
             
             # Set up debug folder
             try:
@@ -3085,55 +3186,55 @@ if __name__ == "__main__":
                                                     'bbox': (x1, y1, x2, y2),
                                                     'confidence': conf
                                                 })
-                    else:
-                        # YOLOv5 results format - using pandas
-                        df = results.pandas().xyxy[0]
-                        df = df[df['class'] == 0]
+                        else:
+                            # YOLOv5 results format - using pandas
+                            df = results.pandas().xyxy[0]
+                            df = df[df['class'] == 0]
+                            
+                            for _, row in df.iterrows():
+                                x1, y1, x2, y2 = int(row['xmin']), int(row['ymin']), int(row['xmax']), int(row['ymax'])
+                                
+                                # Calculate center point and foot position
+                                center_x = (x1 + x2) // 2
+                                center_y = (y1 + y2) // 2
+                                foot_x = center_x
+                                foot_y = y2  # Bottom of bounding box represents feet
+                                
+                                # Add to people list
+                                people.append({
+                                    'position': (center_x, center_y),
+                                    'foot_position': (foot_x, foot_y),
+                                    'bbox': (x1, y1, x2, y2),
+                                    'confidence': row['confidence']
+                                })
+                    except Exception as e:
+                        error_msg = str(e)
                         
-                        for _, row in df.iterrows():
-                            x1, y1, x2, y2 = int(row['xmin']), int(row['ymin']), int(row['xmax']), int(row['ymax'])
-                            
-                            # Calculate center point and foot position
-                            center_x = (x1 + x2) // 2
-                            center_y = (y1 + y2) // 2
-                            foot_x = center_x
-                            foot_y = y2  # Bottom of bounding box represents feet
-                            
-                            # Add to people list
-                            people.append({
-                                'position': (center_x, center_y),
-                                'foot_position': (foot_x, foot_y),
-                                'bbox': (x1, y1, x2, y2),
-                                'confidence': row['confidence']
-                            })
-                except Exception as e:
-                    error_msg = str(e)
+                        # Add more specific error messages for YOLOv8+ issues
+                        if "'list' object has no attribute 'pandas'" in error_msg:
+                            # Extract the model version
+                            version_match = re.search(r'yolov(\d+)', model_name.lower())
+                            version = version_match.group(1) if version_match else "newer"
+                            OutputManager.log(f"YOLOv{version} result format error. This model requires the ultralytics package.", "ERROR")
+                            OutputManager.log("Install ultralytics with: pip install ultralytics", "INFO")
+                            OutputManager.log("Or try YOLOv5 instead with: --model yolov5s", "INFO")
+                        elif "no attribute 'numpy'" in error_msg or "tensor" in error_msg.lower():
+                            OutputManager.log(f"YOLO tensor processing error with {model_name}.", "ERROR")
+                            OutputManager.log("Install ultralytics with: pip install ultralytics", "INFO")
+                        else:
+                            OutputManager.log(f"Problem detecting people: {str(e)}", "ERROR")
+                        
+                        # Continue with empty people list
+                        people = []
                     
-                    # Add more specific error messages for YOLOv8+ issues
-                    if "'list' object has no attribute 'pandas'" in error_msg:
-                        # Extract the model version
-                        version_match = re.search(r'yolov(\d+)', model_name.lower())
-                        version = version_match.group(1) if version_match else "newer"
-                        OutputManager.log(f"YOLOv{version} result format error. This model requires the ultralytics package.", "ERROR")
-                        OutputManager.log("Install ultralytics with: pip install ultralytics", "INFO")
-                        OutputManager.log("Or try YOLOv5 instead with: --model yolov5s", "INFO")
-                    elif "no attribute 'numpy'" in error_msg or "tensor" in error_msg.lower():
-                        OutputManager.log(f"YOLO tensor processing error with {model_name}.", "ERROR")
-                        OutputManager.log("Install ultralytics with: pip install ultralytics", "INFO")
-                    else:
-                        OutputManager.log(f"Problem detecting people: {str(e)}", "ERROR")
-                    
-                    # Continue with empty people list
-                    people = []
-                
-                # Report how many people we found
-                OutputManager.log(f"Found {len(people)} {'person' if len(people) == 1 else 'people'} in the image", "SUCCESS")
-                if Config.Output.EXTRA_VERBOSE and people:
-                    # Log details of detected people
-                    for i, person in enumerate(people):
-                        x1, y1, x2, y2 = person['bbox']
-                        conf = person['confidence']
-                        OutputManager.log(f"Person {i+1}: bbox=({x1},{y1},{x2},{y2}), confidence={conf:.2f}", "DEBUG")
+                    # Report how many people we found
+                    OutputManager.log(f"Found {len(people)} {'person' if len(people) == 1 else 'people'} in the image", "SUCCESS")
+                    if Config.Output.EXTRA_VERBOSE and people:
+                        # Log details of detected people
+                        for i, person in enumerate(people):
+                            x1, y1, x2, y2 = person['bbox']
+                            conf = person['confidence']
+                            OutputManager.log(f"Person {i+1}: bbox=({x1},{y1},{x2},{y2}), confidence={conf:.2f}", "DEBUG")
             except Exception as e:
                 error_msg = str(e)
                 
@@ -3341,9 +3442,9 @@ if __name__ == "__main__":
             
             # If there were errors that didn't cause a fatal exit, still indicate an error status
             if OutputManager.errors:
-                return 1
+                sys.exit(1)
             
-            return 0
+            sys.exit(0)
         except Exception as e:
             # This is the main catch-all for any unhandled exceptions in the try block
             OutputManager.log(f"Unhandled error in main function: {str(e)}", "ERROR")
@@ -3358,12 +3459,12 @@ if __name__ == "__main__":
                 total_courts=0
             )
             print_error_summary(final_summary)
-            return 1
+            sys.exit(1)
     except Exception as e:
         # For other unhandled exceptions, provide a generic error message
         error_message = str(e)
         possible_solution = ""
-            possible_solution = "Check requirements with: pip install -r requirements.txt"
+        possible_solution = "Check requirements with: pip install -r requirements.txt"
         
         print("\n" + "╭" + "─" * 78 + "╮")
         print("│ " + "ERROR: UNHANDLED EXCEPTION".center(78) + " │")

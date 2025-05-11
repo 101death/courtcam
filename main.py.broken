@@ -1886,8 +1886,8 @@ def main():
                                                 'bbox': (x1, y1, x2, y2),
                                                 'confidence': conf
                                             })
-                        else:
-                            # YOLOv5 results format - using pandas
+                            else:
+                                # YOLOv5 results format - using pandas
                             df = results.pandas().xyxy[0]
                             df = df[df['class'] == 0]
                             
