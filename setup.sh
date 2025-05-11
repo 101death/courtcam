@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-trap 'echo -e "\n\033[0;31mError on line $LINENO. Exiting.\033[0m" >&2; exit 1' ERR
-
-# Color codes
-BOLD='\033[1m'
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+trap 'echo "Error on line $LINENO. Exiting." >&2; exit 1' ERR
 
 # Function to check if a command exists
 command_exists() {
@@ -18,11 +10,11 @@ command_exists() {
 # Function to check if we have sudo privileges
 check_sudo() {
   if ! command_exists sudo; then
-    echo -e "${YELLOW}sudo not found. Some features may be limited.${NC}"
+    echo "sudo not found. Some features may be limited."
     return 1
   fi
   if ! sudo -v >/dev/null 2>&1; then
-    echo -e "${YELLOW}sudo access not available. Some features may be limited.${NC}"
+    echo "sudo access not available. Some features may be limited."
     return 1
   fi
   return 0
