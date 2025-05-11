@@ -28,11 +28,11 @@ check_sudo() {
   return 0
 }
 
-# Improved spinner function
+# Improved spinner function with ASCII characters
 spinner() {
   local pid=$1
   local delay=0.1
-  local spinstr='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+  local spinstr='|/-\\'
   local i=0
   while kill -0 "$pid" 2>/dev/null; do
     printf "\r\033[K%s [%c]" "$2" "${spinstr:$i:1}"
