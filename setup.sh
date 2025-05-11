@@ -48,18 +48,18 @@ run_with_spinner() {
   local msg="$2"
   local temp_file=$(mktemp)
   
-  # Print the message and start spinner
-  echo -ne "${BOLD}${msg}...${NC}"
+  # Print the message without color codes first
+  printf "%s... " "$msg"
   
   # Run the command and capture output
-  if eval "$cmd" > "$temp_file" 2>&1 & spinner $! "${BOLD}${msg}...${NC}"; then
-    echo -e " ${GREEN}✓${NC}"
+  if eval "$cmd" > "$temp_file" 2>&1 & spinner $! "$msg..."; then
+    printf "\r%s... %s\n" "$msg" "✓"
     rm -f "$temp_file"
     return 0
   else
-    echo -e " ${RED}✗${NC}"
+    printf "\r%s... %s\n" "$msg" "✗"
     if [ -s "$temp_file" ]; then
-      echo -e "${RED}Error output:${NC}"
+      printf "Error output:\n"
       cat "$temp_file"
     fi
     rm -f "$temp_file"
@@ -68,9 +68,9 @@ run_with_spinner() {
 }
 
 # Banner
-echo -e "\n${BLUE}${BOLD}===============================================${NC}"
-echo -e "${BLUE}${BOLD}      Tennis Court Detection Setup Script     ${NC}"
-echo -e "${BLUE}${BOLD}===============================================${NC}\n"
+printf "\n===============================================\n"
+printf "      Tennis Court Detection Setup Script     \n"
+printf "===============================================\n\n"
 
 # Check sudo access
 HAS_SUDO=false
@@ -84,14 +84,14 @@ if [ -f /proc/device-tree/model ]; then
   MODEL=$(< /proc/device-tree/model)
   if [[ $MODEL == *Raspberry* ]]; then
     IS_PI=true
-    echo -e "${GREEN}Detected platform: $MODEL${NC}"
+    printf "Detected platform: %s\n" "$MODEL"
     if [ "$(uname -m)" = "aarch64" ]; then
       IS_64BIT=true
-      echo -e "${GREEN}64-bit OS detected${NC}"
+      printf "64-bit OS detected\n"
     else
-      echo -e "${GREEN}32-bit OS detected${NC}"
+      printf "32-bit OS detected\n"
     fi
-    echo
+    printf "\n"
   fi
 fi
 
@@ -99,34 +99,34 @@ fi
 run_with_spinner "mkdir -p models images" "Creating directories"
 
 # Python 3 check
-echo -e "\n${BOLD}Checking Python environment...${NC}"
+printf "\nChecking Python environment...\n"
 if ! command_exists python3; then
-  echo -e "${RED}Python3 is required. Please install it.${NC}"
+  printf "Python3 is required. Please install it.\n"
   exit 1
 fi
 
 PY=python3
 PY_VERSION=$($PY --version)
-echo -e "${GREEN}Found $PY_VERSION${NC}"
+printf "Found %s\n" "$PY_VERSION"
 
 # Check Python version
 PYV_MAJOR=$($PY -c 'import sys; print(sys.version_info.major)')
 PYV_MINOR=$($PY -c 'import sys; print(sys.version_info.minor)')
 if [ "$PYV_MAJOR" -lt 3 ] || ([ "$PYV_MAJOR" -eq 3 ] && [ "$PYV_MINOR" -lt 7 ]); then
-  echo -e "${RED}Python 3.7 or higher is required. Found $PYV_MAJOR.$PYV_MINOR${NC}"
+  printf "Python 3.7 or higher is required. Found %s.%s\n" "$PYV_MAJOR" "$PYV_MINOR"
   exit 1
 fi
 
 # Virtual environment setup
 if [ -d "venv" ]; then
-  echo -e "\n${YELLOW}Virtual environment already exists${NC}"
+  printf "\nVirtual environment already exists\n"
 else
   run_with_spinner "$PY -m venv --system-site-packages venv" "Setting up virtual environment"
 fi
 
 # Activate virtual environment
 source venv/bin/activate || {
-  echo -e "${RED}Failed to activate virtual environment${NC}"
+  printf "Failed to activate virtual environment\n"
   exit 1
 }
 
@@ -135,7 +135,7 @@ run_with_spinner "pip install --upgrade pip setuptools wheel" "Upgrading pip"
 
 # System dependencies
 if command_exists apt-get && [ "$HAS_SUDO" = true ]; then
-  echo -e "\n${BOLD}Installing system dependencies...${NC}"
+  printf "\nInstalling system dependencies...\n"
   run_with_spinner "sudo DEBIAN_FRONTEND=noninteractive apt-get update -y" "Updating package lists"
   
   # Install system packages
@@ -156,14 +156,14 @@ if command_exists apt-get && [ "$HAS_SUDO" = true ]; then
       libcamera-dev \
       python3-libcamera" "Installing camera support"
   else
-    echo -e "\n${YELLOW}Skipping camera support (not a Raspberry Pi)${NC}"
+    printf "\nSkipping camera support (not a Raspberry Pi)\n"
   fi
 else
-  echo -e "\n${YELLOW}Skipping system dependencies (apt-get not found or no sudo access)${NC}"
+  printf "\nSkipping system dependencies (apt-get not found or no sudo access)\n"
 fi
 
 # Python dependencies
-echo -e "\n${BOLD}Installing Python dependencies...${NC}"
+printf "\nInstalling Python dependencies...\n"
 if [ "$IS_PI" = true ]; then
   # Special handling for Raspberry Pi
   if [ "$PYV_MAJOR" -eq 3 ] && [ "$PYV_MINOR" -lt 10 ]; then
@@ -181,7 +181,7 @@ run_with_spinner "pip install -r requirements.txt" "Installing Python requiremen
 run_with_spinner "pip install ultralytics" "Installing ultralytics"
 
 # Model downloads
-echo -e "\n${BOLD}Model downloads:${NC}"
+printf "\nModel downloads:\n"
 declare -A MODEL_URLS=(
   ["yolov5n"]="https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5n.pt"
   ["yolov5s"]="https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5s.pt"
@@ -197,15 +197,15 @@ declare -A MODEL_URLS=(
 
 for model in "${!MODEL_URLS[@]}"; do
   if [ -f "models/$model.pt" ]; then
-    echo -e "  ${YELLOW}$model already downloaded${NC}"
+    printf "  %s already downloaded\n" "$model"
   else
     read -rp "Download $model? [y/N]: " ynm
     if [[ $ynm =~ ^[Yy] ]]; then
-      echo -ne "  ${BOLD}$model...${NC}"
-      if curl -sL "${MODEL_URLS[$model]}" -o "models/$model.pt" & spinner $! "  ${BOLD}$model...${NC}"; then
-        echo -e " ${GREEN}✓${NC}"
+      printf "  %s... " "$model"
+      if curl -sL "${MODEL_URLS[$model]}" -o "models/$model.pt" & spinner $! "  $model..."; then
+        printf "\r  %s... ✓\n" "$model"
       else
-        echo -e " ${RED}✗${NC}"
+        printf "\r  %s... ✗\n" "$model"
         rm -f "models/$model.pt" 2>/dev/null
       fi
     fi
@@ -213,14 +213,14 @@ for model in "${!MODEL_URLS[@]}"; do
 done
 
 # Final setup
-echo -e "\n${BOLD}Finalizing setup...${NC}"
+printf "\nFinalizing setup...\n"
 run_with_spinner "pip list" "Verifying installations"
 
-echo -e "\n${GREEN}${BOLD}Setup complete!${NC}\n"
+printf "\nSetup complete!\n\n"
 
 # Post-install instructions
-echo -e "${BOLD}Post-install instructions:${NC}"
-echo -e "1. Activate virtual environment:${NC} source venv/bin/activate"
-echo -e "2. Run detection:${NC} python main.py"
-echo -e "3. For camera usage:${NC} python main.py --no-camera"
-echo -e "4. For specific image:${NC} python main.py --input images/input.png\n"
+printf "Post-install instructions:\n"
+printf "1. Activate virtual environment: source venv/bin/activate\n"
+printf "2. Run detection: python main.py\n"
+printf "3. For camera usage: python main.py --no-camera\n"
+printf "4. For specific image: python main.py --input images/input.png\n\n"
