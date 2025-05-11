@@ -35,7 +35,7 @@ spinner() {
   local spinstr='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
   local i=0
   while kill -0 "$pid" 2>/dev/null; do
-    printf "\r\033[K [%c] " "${spinstr:$i:1}"
+    printf "\r\033[K%s [%c]" "$2" "${spinstr:$i:1}"
     i=$(( (i + 1) % ${#spinstr} ))
     sleep "$delay"
   done
@@ -49,15 +49,15 @@ run_with_spinner() {
   local temp_file=$(mktemp)
   
   # Print the message and start spinner
-  echo -ne "${BOLD}${msg}...${NC} "
+  echo -ne "${BOLD}${msg}...${NC}"
   
   # Run the command and capture output
-  if eval "$cmd" > "$temp_file" 2>&1 & spinner $!; then
-    echo -e "${GREEN}✓${NC}"
+  if eval "$cmd" > "$temp_file" 2>&1 & spinner $! "${BOLD}${msg}...${NC}"; then
+    echo -e " ${GREEN}✓${NC}"
     rm -f "$temp_file"
     return 0
   else
-    echo -e "${RED}✗${NC}"
+    echo -e " ${RED}✗${NC}"
     if [ -s "$temp_file" ]; then
       echo -e "${RED}Error output:${NC}"
       cat "$temp_file"
@@ -201,11 +201,11 @@ for model in "${!MODEL_URLS[@]}"; do
   else
     read -rp "Download $model? [y/N]: " ynm
     if [[ $ynm =~ ^[Yy] ]]; then
-      echo -ne "  ${BOLD}$model...${NC} "
-      if curl -sL "${MODEL_URLS[$model]}" -o "models/$model.pt" & spinner $!; then
-        echo -e "${GREEN}✓${NC}"
+      echo -ne "  ${BOLD}$model...${NC}"
+      if curl -sL "${MODEL_URLS[$model]}" -o "models/$model.pt" & spinner $! "  ${BOLD}$model...${NC}"; then
+        echo -e " ${GREEN}✓${NC}"
       else
-        echo -e "${RED}✗${NC}"
+        echo -e " ${RED}✗${NC}"
         rm -f "models/$model.pt" 2>/dev/null
       fi
     fi
