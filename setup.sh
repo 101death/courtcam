@@ -55,15 +55,28 @@ echo -e "${GREEN}Directories ready${NC}\n"
 echo -e "${BOLD}Checking for Python 3...${NC}"
 if command -v python3 >/dev/null 2>&1; then
   PY=python3
-  echo -e "${GREEN}Found $(python3 --version)${NC}\n"
+  PY_VERSION=$($PY --version)
+  echo -e "${GREEN}Found $PY_VERSION${NC}\n"
 else
   echo -e "${RED}Python3 is required. Please install it.${NC}"; exit 1
 fi
 
+# Check Python version
+PYV_MAJOR=$($PY -c 'import sys; print(sys.version_info.major)')
+PYV_MINOR=$($PY -c 'import sys; print(sys.version_info.minor)')
+if [ "$PYV_MAJOR" -lt 3 ] || ([ "$PYV_MAJOR" -eq 3 ] && [ "$PYV_MINOR" -lt 7 ]); then
+  echo -e "${RED}Python 3.7 or higher is required. Found $PYV_MAJOR.$PYV_MINOR${NC}"
+  exit 1
+fi
+
 # Virtual environment setup
 echo -ne "${BOLD}Setting up virtual environment...${NC}"
-$PY -m venv --system-site-packages venv >/dev/null 2>&1 & spinner $!
-echo -e " ${GREEN}Done${NC}"
+if [ -d "venv" ]; then
+  echo -e " ${YELLOW}Virtual environment already exists${NC}"
+else
+  $PY -m venv --system-site-packages venv >/dev/null 2>&1 & spinner $!
+  echo -e " ${GREEN}Done${NC}"
+fi
 source venv/bin/activate
 
 # Upgrade pip
@@ -71,63 +84,88 @@ echo -ne "${BOLD}Upgrading pip...${NC}"
 pip install --upgrade pip setuptools wheel >/dev/null 2>&1 & spinner $!
 echo -e " ${GREEN}Done${NC}\n"
 
-# Raspberry Pi camera support
-if [ "$IS_PI" = true ]; then
-  echo -ne "${BOLD}Installing camera support...${NC}"
-  sudo DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null 2>&1
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-picamera2 libcamera-dev python3-libcamera >/dev/null 2>&1 & spinner $!
-  echo -e " ${GREEN}Done${NC}\n"
-else
-  echo -e "${YELLOW}Skipping camera support (not a Raspberry Pi)${NC}\n"
-fi
-
 # System dependencies
-echo -ne "${BOLD}Installing system dependencies...${NC}"
-sudo DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null 2>&1
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-opencv libopenblas-dev libatlas-base-dev \
-     libjpeg-dev libtiff5-dev libgl1-mesa-glx git curl >/dev/null 2>&1 & spinner $!
-echo -e " ${GREEN}Done${NC}\n"
+if command -v apt-get >/dev/null 2>&1; then
+  echo -ne "${BOLD}Installing system dependencies...${NC}"
+  sudo DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null 2>&1
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    python3-opencv \
+    libopenblas-dev \
+    libatlas-base-dev \
+    libjpeg-dev \
+    libtiff5-dev \
+    libgl1-mesa-glx \
+    git \
+    curl \
+    >/dev/null 2>&1 & spinner $!
+  echo -e " ${GREEN}Done${NC}\n"
+
+  # Raspberry Pi camera support
+  if [ "$IS_PI" = true ]; then
+    echo -ne "${BOLD}Installing camera support...${NC}"
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+      python3-picamera2 \
+      libcamera-dev \
+      python3-libcamera \
+      >/dev/null 2>&1 & spinner $!
+    echo -e " ${GREEN}Done${NC}\n"
+  else
+    echo -e "${YELLOW}Skipping camera support (not a Raspberry Pi)${NC}\n"
+  fi
+else
+  echo -e "${YELLOW}Skipping system dependencies (apt-get not found)${NC}\n"
+fi
 
 # Python dependencies
 echo -ne "${BOLD}Installing Python dependencies...${NC}"
 if [ "$IS_PI" = true ]; then
-  PYV_MAJOR=$($PY -c 'import sys; print(sys.version_info.major)')
-  PYV_MINOR=$($PY -c 'import sys; print(sys.version_info.minor)')
+  # Special handling for Raspberry Pi
   if [ "$PYV_MAJOR" -eq 3 ] && [ "$PYV_MINOR" -lt 10 ]; then
     pip install numpy==1.19.5 >/dev/null 2>&1
   else
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-numpy >/dev/null 2>&1
   fi
-  pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu \
-      opencv-python pandas shapely tqdm pillow matplotlib certifi >/dev/null 2>&1 & spinner $!
-else
-  pip install -r requirements.txt >/dev/null 2>&1 & spinner $!
+  pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu >/dev/null 2>&1
 fi
+
+# Install all requirements
+pip install -r requirements.txt >/dev/null 2>&1 & spinner $!
 echo -e " ${GREEN}Done${NC}\n"
 
 # Ultralytics (YOLOv8)
-read -rp "Install ultralytics for YOLOv8 support? [y/N]: " yn
-if [[ $yn =~ ^[Yy] ]]; then
-  echo -ne "${BOLD}Installing ultralytics...${NC}"
-  pip install ultralytics >/dev/null 2>&1 & spinner $!
-  echo -e " ${GREEN}Done${NC}\n"
-fi
+echo -ne "${BOLD}Installing ultralytics...${NC}"
+pip install ultralytics >/dev/null 2>&1 & spinner $!
+echo -e " ${GREEN}Done${NC}\n"
 
 # Model downloads
 echo -e "${BOLD}Model downloads:${NC}"
-for model in yolov5n yolov5s yolov5m yolov8n yolov8s; do
-  read -rp "Download $model? [y/N]: " ynm
-  if [[ $ynm =~ ^[Yy] ]]; then
-    echo -ne "  $model...${NC}"
-    case $model in
-      yolov5n)   url=https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5n.pt ;;  
-      yolov5s)   url=https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt ;;  
-      yolov5m)   url=https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5m.pt ;;  
-      yolov8n)   url=https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt ;;  
-      yolov8s)   url=https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8s.pt ;;  
-    esac
-    curl -sL "$url" -o "models/$model.pt" & spinner $!
-    echo -e " ${GREEN}Done${NC}"
+declare -A MODEL_URLS=(
+  ["yolov5n"]="https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5n.pt"
+  ["yolov5s"]="https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5s.pt"
+  ["yolov5m"]="https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5m.pt"
+  ["yolov5l"]="https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5l.pt"
+  ["yolov5x"]="https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5x.pt"
+  ["yolov8n"]="https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt"
+  ["yolov8s"]="https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8s.pt"
+  ["yolov8m"]="https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8m.pt"
+  ["yolov8l"]="https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8l.pt"
+  ["yolov8x"]="https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8x.pt"
+)
+
+for model in "${!MODEL_URLS[@]}"; do
+  if [ -f "models/$model.pt" ]; then
+    echo -e "  ${YELLOW}$model already downloaded${NC}"
+  else
+    read -rp "Download $model? [y/N]: " ynm
+    if [[ $ynm =~ ^[Yy] ]]; then
+      echo -ne "  $model...${NC}"
+      if curl -sL "${MODEL_URLS[$model]}" -o "models/$model.pt" & spinner $!; then
+        echo -e " ${GREEN}Done${NC}"
+      else
+        echo -e " ${RED}Failed${NC}"
+        rm -f "models/$model.pt" 2>/dev/null
+      fi
+    fi
   fi
 done
 
@@ -138,5 +176,8 @@ sleep 1 & spinner $!
 echo -e " ${GREEN}Setup complete!${NC}\n"
 
 # Post-install instructions
-echo -e "To activate virtual environment:${NC} source venv/bin/activate"
-echo -e "To run detection:${NC} python main.py --input images/input.png\n"
+echo -e "${BOLD}Post-install instructions:${NC}"
+echo -e "1. Activate virtual environment:${NC} source venv/bin/activate"
+echo -e "2. Run detection:${NC} python main.py"
+echo -e "3. For camera usage:${NC} python main.py --no-camera"
+echo -e "4. For specific image:${NC} python main.py --input images/input.png\n"
