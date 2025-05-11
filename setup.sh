@@ -40,16 +40,24 @@ run_with_spinner() {
   local msg="$2"
   local temp_file=$(mktemp)
   
-  # Print the message without color codes first
+  # Print the message in bold
+  tput bold
   printf "%s... " "$msg"
+  tput sgr0
   
   # Run the command and capture output
   if eval "$cmd" > "$temp_file" 2>&1 & spinner $! "$msg..."; then
-    printf "\r%s... %s\n" "$msg" "✓"
+    tput bold
+    printf "\r%s... " "$msg"
+    tput sgr0
+    printf "✓\n"
     rm -f "$temp_file"
     return 0
   else
-    printf "\r%s... %s\n" "$msg" "✗"
+    tput bold
+    printf "\r%s... " "$msg"
+    tput sgr0
+    printf "✗\n"
     if [ -s "$temp_file" ]; then
       printf "Error output:\n"
       cat "$temp_file"
@@ -60,9 +68,11 @@ run_with_spinner() {
 }
 
 # Banner
+tput bold
 printf "\n===============================================\n"
 printf "      Tennis Court Detection Setup Script     \n"
 printf "===============================================\n\n"
+tput sgr0
 
 # Check sudo access
 HAS_SUDO=false
@@ -91,7 +101,9 @@ fi
 run_with_spinner "mkdir -p models images" "Creating directories"
 
 # Python 3 check
+tput bold
 printf "\nChecking Python environment...\n"
+tput sgr0
 if ! command_exists python3; then
   printf "Python3 is required. Please install it.\n"
   exit 1
@@ -127,7 +139,9 @@ run_with_spinner "pip install --upgrade pip setuptools wheel" "Upgrading pip"
 
 # System dependencies
 if command_exists apt-get && [ "$HAS_SUDO" = true ]; then
+  tput bold
   printf "\nInstalling system dependencies...\n"
+  tput sgr0
   run_with_spinner "sudo DEBIAN_FRONTEND=noninteractive apt-get update -y" "Updating package lists"
   
   # Install system packages
@@ -155,7 +169,9 @@ else
 fi
 
 # Python dependencies
+tput bold
 printf "\nInstalling Python dependencies...\n"
+tput sgr0
 if [ "$IS_PI" = true ]; then
   # Special handling for Raspberry Pi
   if [ "$PYV_MAJOR" -eq 3 ] && [ "$PYV_MINOR" -lt 10 ]; then
@@ -173,7 +189,9 @@ run_with_spinner "pip install -r requirements.txt" "Installing Python requiremen
 run_with_spinner "pip install ultralytics" "Installing ultralytics"
 
 # Model downloads
+tput bold
 printf "\nModel downloads:\n"
+tput sgr0
 declare -A MODEL_URLS=(
   ["yolov5n"]="https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5n.pt"
   ["yolov5s"]="https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5s.pt"
@@ -193,11 +211,19 @@ for model in "${!MODEL_URLS[@]}"; do
   else
     read -rp "Download $model? [y/N]: " ynm
     if [[ $ynm =~ ^[Yy] ]]; then
+      tput bold
       printf "  %s... " "$model"
+      tput sgr0
       if curl -sL "${MODEL_URLS[$model]}" -o "models/$model.pt" & spinner $! "  $model..."; then
-        printf "\r  %s... ✓\n" "$model"
+        tput bold
+        printf "\r  %s... " "$model"
+        tput sgr0
+        printf "✓\n"
       else
-        printf "\r  %s... ✗\n" "$model"
+        tput bold
+        printf "\r  %s... " "$model"
+        tput sgr0
+        printf "✗\n"
         rm -f "models/$model.pt" 2>/dev/null
       fi
     fi
@@ -205,13 +231,19 @@ for model in "${!MODEL_URLS[@]}"; do
 done
 
 # Final setup
+tput bold
 printf "\nFinalizing setup...\n"
+tput sgr0
 run_with_spinner "pip list" "Verifying installations"
 
+tput bold
 printf "\nSetup complete!\n\n"
+tput sgr0
 
 # Post-install instructions
+tput bold
 printf "Post-install instructions:\n"
+tput sgr0
 printf "1. Activate virtual environment: source venv/bin/activate\n"
 printf "2. Run detection: python main.py\n"
 printf "3. For camera usage: python main.py --no-camera\n"
