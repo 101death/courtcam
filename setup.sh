@@ -28,31 +28,41 @@ check_sudo() {
   return 0
 }
 
-# Spinner function for background tasks
+# Improved spinner function
 spinner() {
   local pid=$1
   local delay=0.1
-  local spinstr='|/-\\'
+  local spinstr='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+  local i=0
   while kill -0 "$pid" 2>/dev/null; do
-    for ((i=0; i<${#spinstr}; i++)); do
-      printf "\r [%c]" "${spinstr:$i:1}"
-      sleep "$delay"
-    done
+    printf "\r\033[K [%c] " "${spinstr:$i:1}"
+    i=$(( (i + 1) % ${#spinstr} ))
+    sleep "$delay"
   done
-  printf "\r    \r"
+  printf "\r\033[K"
 }
 
 # Function to run commands with spinner
 run_with_spinner() {
   local cmd="$1"
   local msg="$2"
-  echo -ne "${BOLD}$msg...${NC}"
-  eval "$cmd" >/dev/null 2>&1 & spinner $!
-  if [ $? -eq 0 ]; then
-    echo -e " ${GREEN}Done${NC}"
+  local temp_file=$(mktemp)
+  
+  # Print the message and start spinner
+  echo -ne "${BOLD}${msg}...${NC} "
+  
+  # Run the command and capture output
+  if eval "$cmd" > "$temp_file" 2>&1 & spinner $!; then
+    echo -e "${GREEN}✓${NC}"
+    rm -f "$temp_file"
     return 0
   else
-    echo -e " ${RED}Failed${NC}"
+    echo -e "${RED}✗${NC}"
+    if [ -s "$temp_file" ]; then
+      echo -e "${RED}Error output:${NC}"
+      cat "$temp_file"
+    fi
+    rm -f "$temp_file"
     return 1
   fi
 }
@@ -191,11 +201,11 @@ for model in "${!MODEL_URLS[@]}"; do
   else
     read -rp "Download $model? [y/N]: " ynm
     if [[ $ynm =~ ^[Yy] ]]; then
-      echo -ne "  $model...${NC}"
+      echo -ne "  ${BOLD}$model...${NC} "
       if curl -sL "${MODEL_URLS[$model]}" -o "models/$model.pt" & spinner $!; then
-        echo -e " ${GREEN}Done${NC}"
+        echo -e "${GREEN}✓${NC}"
       else
-        echo -e " ${RED}Failed${NC}"
+        echo -e "${RED}✗${NC}"
         rm -f "models/$model.pt" 2>/dev/null
       fi
     fi
