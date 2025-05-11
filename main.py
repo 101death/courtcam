@@ -499,14 +499,14 @@ def get_model_path(model_name):
         with suppress_stdout_stderr():
             from ultralytics import YOLO
             model = YOLO(model_name)
-            model.export(format="pt")  # Export to PyTorch format
             
-            # Move the downloaded model to our models directory
-            downloaded_path = f"{model_name}.pt"
-            if os.path.exists(downloaded_path):
-                os.makedirs(Config.Paths.MODELS_DIR, exist_ok=True)
-                shutil.move(downloaded_path, model_path)
-                return model_path
+            # Create models directory if it doesn't exist
+            os.makedirs(Config.Paths.MODELS_DIR, exist_ok=True)
+            
+            # Save the model directly to our models directory
+            model.save(model_path)
+            return model_path
+            
     except ImportError:
         OutputManager.log("Error: ultralytics package not found. Please install it using: pip install ultralytics", "ERROR")
         return None
@@ -535,14 +535,28 @@ def select_model():
         print("-"*20)
         for i, model in enumerate(v5_models, 1):
             size = model.split("v5")[1].upper()
-            print(f"{i}. {model} ({size} - Faster, less accurate)")
+            speed_desc = {
+                "n": "fastest",
+                "s": "faster",
+                "m": "fast",
+                "l": "slow",
+                "x": "slower"
+            }.get(size.lower(), "fast")
+            print(f"{i}. {model} ({size} - {speed_desc})")
     
     if v8_models:
         print("\nYOLOv8 Models:")
         print("-"*20)
         for i, model in enumerate(v8_models, len(v5_models) + 1):
             size = model.split("v8")[1].upper()
-            print(f"{i}. {model} ({size} - Newer, more accurate)")
+            speed_desc = {
+                "n": "fastest",
+                "s": "faster",
+                "m": "fast",
+                "l": "slow",
+                "x": "slower"
+            }.get(size.lower(), "fast")
+            print(f"{i}. {model} ({size} - {speed_desc})")
     
     print("\n" + "="*50)
     
