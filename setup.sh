@@ -10,6 +10,24 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
+# Function to check if a command exists
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+# Function to check if we have sudo privileges
+check_sudo() {
+  if ! command_exists sudo; then
+    echo -e "${YELLOW}sudo not found. Some features may be limited.${NC}"
+    return 1
+  fi
+  if ! sudo -v >/dev/null 2>&1; then
+    echo -e "${YELLOW}sudo access not available. Some features may be limited.${NC}"
+    return 1
+  fi
+  return 0
+}
+
 # Spinner function for background tasks
 spinner() {
   local pid=$1
@@ -24,10 +42,31 @@ spinner() {
   printf "\r    \r"
 }
 
+# Function to run commands with spinner
+run_with_spinner() {
+  local cmd="$1"
+  local msg="$2"
+  echo -ne "${BOLD}$msg...${NC}"
+  eval "$cmd" >/dev/null 2>&1 & spinner $!
+  if [ $? -eq 0 ]; then
+    echo -e " ${GREEN}Done${NC}"
+    return 0
+  else
+    echo -e " ${RED}Failed${NC}"
+    return 1
+  fi
+}
+
 # Banner
-echo -e "${BLUE}${BOLD}===============================================${NC}"
+echo -e "\n${BLUE}${BOLD}===============================================${NC}"
 echo -e "${BLUE}${BOLD}      Tennis Court Detection Setup Script     ${NC}"
 echo -e "${BLUE}${BOLD}===============================================${NC}\n"
+
+# Check sudo access
+HAS_SUDO=false
+if check_sudo; then
+  HAS_SUDO=true
+fi
 
 # Detect Raspberry Pi
 IS_PI=false; IS_64BIT=false
@@ -47,19 +86,18 @@ if [ -f /proc/device-tree/model ]; then
 fi
 
 # Create directories
-echo -e "${BOLD}Creating 'models/' and 'images/' directories...${NC}"
-mkdir -p models images
-echo -e "${GREEN}Directories ready${NC}\n"
+run_with_spinner "mkdir -p models images" "Creating directories"
 
 # Python 3 check
-echo -e "${BOLD}Checking for Python 3...${NC}"
-if command -v python3 >/dev/null 2>&1; then
-  PY=python3
-  PY_VERSION=$($PY --version)
-  echo -e "${GREEN}Found $PY_VERSION${NC}\n"
-else
-  echo -e "${RED}Python3 is required. Please install it.${NC}"; exit 1
+echo -e "\n${BOLD}Checking Python environment...${NC}"
+if ! command_exists python3; then
+  echo -e "${RED}Python3 is required. Please install it.${NC}"
+  exit 1
 fi
+
+PY=python3
+PY_VERSION=$($PY --version)
+echo -e "${GREEN}Found $PY_VERSION${NC}"
 
 # Check Python version
 PYV_MAJOR=$($PY -c 'import sys; print(sys.version_info.major)')
@@ -70,25 +108,28 @@ if [ "$PYV_MAJOR" -lt 3 ] || ([ "$PYV_MAJOR" -eq 3 ] && [ "$PYV_MINOR" -lt 7 ]);
 fi
 
 # Virtual environment setup
-echo -ne "${BOLD}Setting up virtual environment...${NC}"
 if [ -d "venv" ]; then
-  echo -e " ${YELLOW}Virtual environment already exists${NC}"
+  echo -e "\n${YELLOW}Virtual environment already exists${NC}"
 else
-  $PY -m venv --system-site-packages venv >/dev/null 2>&1 & spinner $!
-  echo -e " ${GREEN}Done${NC}"
+  run_with_spinner "$PY -m venv --system-site-packages venv" "Setting up virtual environment"
 fi
-source venv/bin/activate
+
+# Activate virtual environment
+source venv/bin/activate || {
+  echo -e "${RED}Failed to activate virtual environment${NC}"
+  exit 1
+}
 
 # Upgrade pip
-echo -ne "${BOLD}Upgrading pip...${NC}"
-pip install --upgrade pip setuptools wheel >/dev/null 2>&1 & spinner $!
-echo -e " ${GREEN}Done${NC}\n"
+run_with_spinner "pip install --upgrade pip setuptools wheel" "Upgrading pip"
 
 # System dependencies
-if command -v apt-get >/dev/null 2>&1; then
-  echo -ne "${BOLD}Installing system dependencies...${NC}"
-  sudo DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null 2>&1
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+if command_exists apt-get && [ "$HAS_SUDO" = true ]; then
+  echo -e "\n${BOLD}Installing system dependencies...${NC}"
+  run_with_spinner "sudo DEBIAN_FRONTEND=noninteractive apt-get update -y" "Updating package lists"
+  
+  # Install system packages
+  run_with_spinner "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
     python3-opencv \
     libopenblas-dev \
     libatlas-base-dev \
@@ -96,49 +137,41 @@ if command -v apt-get >/dev/null 2>&1; then
     libtiff5-dev \
     libgl1-mesa-glx \
     git \
-    curl \
-    >/dev/null 2>&1 & spinner $!
-  echo -e " ${GREEN}Done${NC}\n"
+    curl" "Installing system packages"
 
   # Raspberry Pi camera support
   if [ "$IS_PI" = true ]; then
-    echo -ne "${BOLD}Installing camera support...${NC}"
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    run_with_spinner "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
       python3-picamera2 \
       libcamera-dev \
-      python3-libcamera \
-      >/dev/null 2>&1 & spinner $!
-    echo -e " ${GREEN}Done${NC}\n"
+      python3-libcamera" "Installing camera support"
   else
-    echo -e "${YELLOW}Skipping camera support (not a Raspberry Pi)${NC}\n"
+    echo -e "\n${YELLOW}Skipping camera support (not a Raspberry Pi)${NC}"
   fi
 else
-  echo -e "${YELLOW}Skipping system dependencies (apt-get not found)${NC}\n"
+  echo -e "\n${YELLOW}Skipping system dependencies (apt-get not found or no sudo access)${NC}"
 fi
 
 # Python dependencies
-echo -ne "${BOLD}Installing Python dependencies...${NC}"
+echo -e "\n${BOLD}Installing Python dependencies...${NC}"
 if [ "$IS_PI" = true ]; then
   # Special handling for Raspberry Pi
   if [ "$PYV_MAJOR" -eq 3 ] && [ "$PYV_MINOR" -lt 10 ]; then
-    pip install numpy==1.19.5 >/dev/null 2>&1
-  else
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-numpy >/dev/null 2>&1
+    run_with_spinner "pip install numpy==1.19.5" "Installing numpy for older Python"
+  elif [ "$HAS_SUDO" = true ]; then
+    run_with_spinner "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-numpy" "Installing numpy"
   fi
-  pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu >/dev/null 2>&1
+  run_with_spinner "pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu" "Installing PyTorch"
 fi
 
-# Install all requirements
-pip install -r requirements.txt >/dev/null 2>&1 & spinner $!
-echo -e " ${GREEN}Done${NC}\n"
+# Install requirements
+run_with_spinner "pip install -r requirements.txt" "Installing Python requirements"
 
-# Ultralytics (YOLOv8)
-echo -ne "${BOLD}Installing ultralytics...${NC}"
-pip install ultralytics >/dev/null 2>&1 & spinner $!
-echo -e " ${GREEN}Done${NC}\n"
+# Install ultralytics
+run_with_spinner "pip install ultralytics" "Installing ultralytics"
 
 # Model downloads
-echo -e "${BOLD}Model downloads:${NC}"
+echo -e "\n${BOLD}Model downloads:${NC}"
 declare -A MODEL_URLS=(
   ["yolov5n"]="https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5n.pt"
   ["yolov5s"]="https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5s.pt"
@@ -169,11 +202,11 @@ for model in "${!MODEL_URLS[@]}"; do
   fi
 done
 
-echo
-# Final spinner to wrap up
-echo -ne "${BOLD}Finalizing setup...${NC}"
-sleep 1 & spinner $!
-echo -e " ${GREEN}Setup complete!${NC}\n"
+# Final setup
+echo -e "\n${BOLD}Finalizing setup...${NC}"
+run_with_spinner "pip list" "Verifying installations"
+
+echo -e "\n${GREEN}${BOLD}Setup complete!${NC}\n"
 
 # Post-install instructions
 echo -e "${BOLD}Post-install instructions:${NC}"
