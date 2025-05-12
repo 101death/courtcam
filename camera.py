@@ -8,6 +8,52 @@ import re
 import contextlib
 from contextlib import redirect_stdout, redirect_stderr
 
+# --- Output Styling (mimicking main.py's OutputManager) ---
+# ANSI color codes
+COLOR_BLUE = "\033[94m"
+COLOR_GREEN = "\033[92m"
+COLOR_YELLOW = "\033[93m"
+COLOR_RED = "\033[91m"
+COLOR_CYAN = "\033[96m"
+COLOR_GRAY = "\033[90m" # For DEBUG
+COLOR_RESET = "\033[0m"
+COLOR_BOLD = "\033[1m"
+
+# Symbols
+SYMBOL_SUCCESS = "✓"
+SYMBOL_INFO = "ℹ"
+SYMBOL_WARNING = "⚠"
+SYMBOL_ERROR = "✗"
+SYMBOL_STATUS = "→"
+SYMBOL_DEBUG = "•"
+
+def _log_camera_message(message, level="INFO"):
+    """Internal logger for camera.py with consistent styling."""
+    color = COLOR_RESET
+    symbol = ""
+
+    if level == "INFO":
+        color = COLOR_BLUE
+        symbol = SYMBOL_INFO
+    elif level == "SUCCESS":
+        color = COLOR_GREEN
+        symbol = SYMBOL_SUCCESS
+    elif level == "WARNING":
+        color = COLOR_YELLOW
+        symbol = SYMBOL_WARNING
+    elif level == "ERROR":
+        color = COLOR_RED
+        symbol = SYMBOL_ERROR
+    elif level == "STATUS":
+        color = COLOR_CYAN
+        symbol = SYMBOL_STATUS
+    elif level == "DEBUG": # Added for completeness
+        color = COLOR_GRAY
+        symbol = SYMBOL_DEBUG
+    
+    print(f"{color}{symbol} {message}{COLOR_RESET}")
+# --- End Output Styling ---
+
 # Define platform and architecture detection
 IS_RASPBERRY_PI = False
 IS_64BIT = False
@@ -25,11 +71,47 @@ try:
             if 'Raspberry Pi' in model:
                 IS_RASPBERRY_PI = True
                 PI_MODEL = model.strip('\0')
-except:
+except Exception: # General exception for safety in detection
     pass
 
 # Check if we're on 64-bit architecture
 IS_64BIT = sys.maxsize > 2**32
+
+# Import camera modules conditionally
+# Suppress their native print statements during import
+_picamera2_available = False
+_picamera_legacy_available = False
+
+with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+    try:
+        from picamera2 import Picamera2
+        _picamera2_available = True
+    except ImportError:
+        pass # Handled below
+    except Exception: # Catch any other import error from picamera2
+        pass
+
+    if not _picamera2_available:
+        try:
+            import picamera
+            from picamera.array import PiRGBArray
+            _picamera_legacy_available = True
+        except ImportError:
+            pass # Handled below
+        except Exception: # Catch any other import error from picamera
+            pass
+
+if _picamera2_available:
+    PI_CAMERA_VERSION = 2
+    _log_camera_message("Picamera2 module found and will be used.", "INFO")
+elif _picamera_legacy_available:
+    PI_CAMERA_VERSION = 1
+    _log_camera_message("Legacy Picamera module found and will be used.", "INFO")
+else:
+    PI_CAMERA_VERSION = None
+    if IS_RASPBERRY_PI:
+        _log_camera_message("No PiCamera module (Picamera2 or legacy) found. Camera functionality disabled.", "WARNING")
+    # else: not on RPi, so no message needed about camera modules
 
 # Function to capture and format camera output
 def format_camera_output(func):
@@ -124,85 +206,121 @@ class CameraOutputFormatter:
                 else:
                     print(f"✓ {line}")
 
-# Import camera modules conditionally
-try:
-    from picamera2 import Picamera2
-    PI_CAMERA_VERSION = 2
-    print("✓ Using picamera2 module")
-except ImportError:
-    try:
-        import picamera
-        from picamera.array import PiRGBArray
-        PI_CAMERA_VERSION = 1
-        print("✓ Using legacy picamera module")
-    except ImportError:
-        PI_CAMERA_VERSION = None
-        # No verbose output here - will be handled by main program
-
 # Keep the decorator for when this module is used directly
 @format_camera_output
-def takePhoto(resolution=DEFAULT_RESOLUTION, output_file='images/input.png'):
+def takePhoto(output_file='images/input.png', resolution=DEFAULT_RESOLUTION):
     """
     Take a photo using the Raspberry Pi camera.
     
     Args:
-        resolution: Tuple of (width, height) for the photo resolution
-        output_file: Path to save the captured image
+        output_file: Path to save the captured image.
+        resolution: Tuple of (width, height) for the photo resolution.
         
     Returns:
-        Boolean indicating success or failure
+        str: Path to the captured image if successful, None otherwise.
     """
-    # Ensure directory exists
-    os.makedirs(os.path.dirname(output_file), exist_ok=True)
-    
-    # If not on Raspberry Pi or camera modules not available, return False
-    if not IS_RASPBERRY_PI or PI_CAMERA_VERSION is None:
-        return False
+    if not IS_RASPBERRY_PI:
+        _log_camera_message("Not running on a Raspberry Pi. Photo capture skipped.", "INFO")
+        return None
+    if PI_CAMERA_VERSION is None:
+        _log_camera_message("PiCamera module not available. Cannot take photo.", "ERROR")
+        return None
 
-    # Attempt to take photo using available camera module
     try:
-        if PI_CAMERA_VERSION == 2:
-            # PiCamera2 approach
-            camera = Picamera2()
-            camera_config = camera.create_still_configuration(main={"size": resolution})
-            camera.configure(camera_config)
-            camera.start()
-            time.sleep(1)  # Let camera warm up
-            camera.capture_file(output_file)
-            camera.close()
-            return True
-            
-        elif PI_CAMERA_VERSION == 1:
-            # Legacy PiCamera approach
-            with picamera.PiCamera() as camera:
-                camera.resolution = resolution
-                camera.start_preview()
-                time.sleep(1)  # Let camera warm up
-                camera.capture(output_file)
-                return True
-    except Exception as e:
-        # No verbose output here - will be handled by main program
-        return False
-    
-    return False
+        _log_camera_message(f"Preparing to capture photo at {resolution} to {output_file}", "STATUS")
+        # Ensure output directory exists
+        output_dir = os.path.dirname(output_file)
+        if not os.path.exists(output_dir) and output_dir != "": # Check if output_dir is not empty string (for current dir)
+            try:
+                os.makedirs(output_dir, exist_ok=True)
+                _log_camera_message(f"Created output directory: {output_dir}", "DEBUG")
+            except OSError as e:
+                _log_camera_message(f"Failed to create directory {output_dir}: {e}", "ERROR")
+                return None
+    except Exception as e: # Catch errors from os.path.dirname or os.makedirs
+        _log_camera_message(f"Error setting up output path {output_file}: {e}", "ERROR")
+        return None
+
+    capture_success = False
+    # Suppress verbose output from camera libraries during capture
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        try:
+            if PI_CAMERA_VERSION == 2:
+                camera = Picamera2()
+                # Create a configuration dictionary
+                config_main = {"size": resolution}
+                # Potentially add format if needed, e.g., "format": "RGB888"
+                camera_config = camera.create_still_configuration(main=config_main)
+                camera.configure(camera_config)
+                camera.start()
+                time.sleep(1) # Allow sensor to adjust
+                camera.capture_file(output_file)
+                camera.close()
+                capture_success = True
+            elif PI_CAMERA_VERSION == 1:
+                with picamera.PiCamera() as camera:
+                    camera.resolution = resolution
+                    # camera.start_preview() # Preview not needed for still capture
+                    time.sleep(1) # Allow sensor to adjust
+                    camera.capture(output_file)
+                    # camera.stop_preview()
+                    capture_success = True
+        except Exception as e:
+            # The actual exception from the camera library is suppressed,
+            # log our own generic error.
+            _log_camera_message(f"Photo capture failed. Error: {type(e).__name__}", "ERROR")
+            # For debugging, one might want to print the actual e here or log it to a file.
+            # print(f"Raw camera error: {e}", file=sys.__stderr__) # Example for deep debug
+            return None
+
+    if capture_success:
+        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+            _log_camera_message(f"Photo saved successfully to {output_file}", "SUCCESS")
+            return output_file
+        else:
+            _log_camera_message(f"Photo capture reported success, but file is missing or empty: {output_file}", "ERROR")
+            return None
+    else:
+        # This path should ideally not be reached if exceptions are caught correctly
+        _log_camera_message("Photo capture failed due to an unspecified issue.", "ERROR")
+        return None
 
 # Example of calling the function (will run when this script is executed directly)
 if __name__ == "__main__":
-    print("✓ Running takePhoto function directly...")
+    _log_camera_message("Camera script running directly.", "INFO")
     
-    # Check for custom resolution in arguments
-    resolution = DEFAULT_RESOLUTION  # Use lower default resolution
-    if len(sys.argv) > 1 and "," in sys.argv[1]:
-        try:
-            w, h = sys.argv[1].split(",")
-            resolution = (int(w), int(h))
-            print(f"✓ Using custom resolution: {resolution}")
-        except Exception as e:
-            print(f"❌ Error parsing resolution: {e}")
-    
-    success = takePhoto(resolution=resolution)
-    if success:
-        print("✓ takePhoto function completed successfully.")
+    current_resolution = DEFAULT_RESOLUTION
+    output_filename = "images/capture_test.png" # Default for direct run
+
+    # Allow command-line arguments: python camera.py [output_path] [width,height]
+    if len(sys.argv) > 1:
+        output_filename = sys.argv[1]
+        _log_camera_message(f"Output file specified: {output_filename}", "INFO")
+        if len(sys.argv) > 2 and "," in sys.argv[2]:
+            try:
+                w_str, h_str = sys.argv[2].split(',')
+                w, h = int(w_str), int(h_str)
+                if w > 0 and h > 0:
+                    current_resolution = (w, h)
+                    _log_camera_message(f"Using custom resolution: {current_resolution}", "INFO")
+                else:
+                    _log_camera_message(f"Invalid resolution values: {w_str},{h_str}. Using default.", "WARNING")
+            except ValueError:
+                _log_camera_message(f"Could not parse resolution: {sys.argv[2]}. Using default.", "WARNING")
     else:
-        print("❌ takePhoto function completed with errors.")
+        _log_camera_message(f"Using default output: {output_filename} and resolution: {current_resolution}", "INFO")
+
+    _log_camera_message("Attempting to take photo...", "STATUS")
+    
+    # Test with specified or default parameters
+    image_path = takePhoto(output_file=output_filename, resolution=current_resolution)
+    
+    if image_path:
+        _log_camera_message(f"Test photo capture successful. Image at: {image_path}", "SUCCESS")
+    else:
+        _log_camera_message("Test photo capture failed.", "ERROR")
+        if not IS_RASPBERRY_PI:
+             _log_camera_message("Note: Script is not running on a Raspberry Pi.", "INFO")
+        elif PI_CAMERA_VERSION is None:
+             _log_camera_message("Note: No Raspberry Pi camera Python libraries (Picamera2 or legacy Picamera) were found.", "INFO")
         sys.exit(1)
