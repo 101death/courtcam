@@ -393,17 +393,17 @@ class OutputManager:
         
     @classmethod
     def create_final_summary(cls, people_count, total_courts, output_path=None, 
-                             processing_time=None, # This is total time, handled by fancy_summary
-                             detailed_court_counts=None, # {court_num: {'in_bounds': X, 'out_bounds': Y}}
+                             processing_time=None,
+                             detailed_court_counts=None,
                              duration_court_detection=0.0,
                              duration_people_detection=0.0,
                              duration_position_analysis=0.0):
         """Create a formatted summary of the detection results."""
         if cls._super_quiet:
-            return
+            return ""
             
         summary_lines = []
-        summary_lines.append(f"{cls.BOLD}Detection Summary{cls.RESET}")
+        summary_lines.append("Detection Summary")
         summary_lines.append("-" * 30)
         summary_lines.append(f"Total Courts Detected: {cls.BOLD}{total_courts}{cls.RESET}")
         summary_lines.append(f"Total People Detected: {cls.BOLD}{people_count}{cls.RESET}")
@@ -430,8 +430,6 @@ class OutputManager:
         if duration_position_analysis > 0:
             summary_lines.append(f"  Position Analysis: {duration_position_analysis:.2f}s")
         
-        # Total time handled by fancy_summary
-        
         if output_path:
             summary_lines.append(f"\nOutput Image: {cls.UNDERLINE}{output_path}{cls.RESET}")
             
@@ -445,8 +443,7 @@ class OutputManager:
             for error in cls.errors:
                 summary_lines.append(f"  - {error}")
                 
-        # Use fancy_summary to print it
-        cls.fancy_summary("Detection Results", "\n".join(summary_lines), processing_time=processing_time)
+        return "\n".join(summary_lines)
 
     @classmethod
     def _ensure_animation_stopped(cls):
@@ -559,7 +556,7 @@ class OutputManager:
         if cls._super_quiet:
             return
         
-        lines = content.split('\n')
+        lines = content.split('\n') if content else []
         max_len = len(title) + 4 # Initial length based on title
         for line in lines:
             # Strip ANSI codes for length calculation
@@ -570,8 +567,10 @@ class OutputManager:
         reset = cls.RESET
         bold = cls.BOLD
         
-        # Top border
-        print(f"{border_color}╔═{bold}{title.center(max_len)}{reset}{border_color}═╗{reset}")
+        # Top border with title
+        print(f"{border_color}╔{'═' * (max_len + 2)}╗{reset}")
+        print(f"{border_color}║ {bold}{title.center(max_len)}{reset}{border_color} ║{reset}")
+        print(f"{border_color}╠{'═' * (max_len + 2)}╣{reset}")
         
         # Content lines
         for line in lines:
@@ -1185,8 +1184,8 @@ def main():
                 
                 # Call takePhoto from the imported module
                 capture_success = camera_module.takePhoto(
-                    filename=camera_output_path, 
-                    output_dir=camera_output_dir, 
+                    output_dir=camera_output_dir,
+                    output_filename=camera_output_filename,
                     width=Config.Camera.WIDTH,  # Use width from Config
                     height=Config.Camera.HEIGHT # Use height from Config
                 )

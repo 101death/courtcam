@@ -208,38 +208,44 @@ class CameraOutputFormatter:
 
 # Keep the decorator for when this module is used directly
 @format_camera_output
-def takePhoto(output_file='images/input.png', resolution=DEFAULT_RESOLUTION):
+def takePhoto(output_dir='output', output_filename='input.png', width=1280, height=720):
     """
     Take a photo using the Raspberry Pi camera.
     
     Args:
-        output_file: Path to save the captured image.
-        resolution: Tuple of (width, height) for the photo resolution.
+        output_dir: Directory to save the captured image.
+        output_filename: Filename for the captured image.
+        width: Width of the photo resolution.
+        height: Height of the photo resolution.
         
     Returns:
-        str: Path to the captured image if successful, None otherwise.
+        bool: True if capture was successful, False otherwise.
     """
     if not IS_RASPBERRY_PI:
         _log_camera_message("Not running on a Raspberry Pi. Photo capture skipped.", "INFO")
-        return None
+        return False
     if PI_CAMERA_VERSION is None:
         _log_camera_message("PiCamera module not available. Cannot take photo.", "ERROR")
-        return None
+        return False
 
     try:
+        # Combine output_dir and output_filename
+        output_file = os.path.join(output_dir, output_filename)
+        resolution = (width, height)
+        
         _log_camera_message(f"Preparing to capture photo at {resolution} to {output_file}", "STATUS")
+        
         # Ensure output directory exists
-        output_dir = os.path.dirname(output_file)
-        if not os.path.exists(output_dir) and output_dir != "": # Check if output_dir is not empty string (for current dir)
+        if not os.path.exists(output_dir) and output_dir != "": # Check if output_dir is not empty string
             try:
                 os.makedirs(output_dir, exist_ok=True)
                 _log_camera_message(f"Created output directory: {output_dir}", "DEBUG")
             except OSError as e:
                 _log_camera_message(f"Failed to create directory {output_dir}: {e}", "ERROR")
-                return None
-    except Exception as e: # Catch errors from os.path.dirname or os.makedirs
+                return False
+    except Exception as e:
         _log_camera_message(f"Error setting up output path {output_file}: {e}", "ERROR")
-        return None
+        return False
 
     capture_success = False
     # Suppress verbose output from camera libraries during capture
@@ -248,42 +254,37 @@ def takePhoto(output_file='images/input.png', resolution=DEFAULT_RESOLUTION):
             if PI_CAMERA_VERSION == 2:
                 camera = Picamera2()
                 # Create a configuration dictionary
-                config_main = {"size": resolution}
-                # Potentially add format if needed, e.g., "format": "RGB888"
-                camera_config = camera.create_still_configuration(main=config_main)
-                camera.configure(camera_config)
+                config = camera.create_still_configuration(main={"size": resolution})
+                camera.configure(config)
+                
+                # Start and wait for camera
                 camera.start()
-                time.sleep(1) # Allow sensor to adjust
+                time.sleep(0.5) # Give camera time to adjust
+                
+                # Capture image
                 camera.capture_file(output_file)
+                camera.stop()
                 camera.close()
                 capture_success = True
+                
             elif PI_CAMERA_VERSION == 1:
                 with picamera.PiCamera() as camera:
                     camera.resolution = resolution
-                    # camera.start_preview() # Preview not needed for still capture
-                    time.sleep(1) # Allow sensor to adjust
+                    camera.start_preview()
+                    time.sleep(0.5) # Give camera time to adjust
                     camera.capture(output_file)
-                    # camera.stop_preview()
                     capture_success = True
+                    
         except Exception as e:
-            # The actual exception from the camera library is suppressed,
-            # log our own generic error.
-            _log_camera_message(f"Photo capture failed. Error: {type(e).__name__}", "ERROR")
-            # For debugging, one might want to print the actual e here or log it to a file.
-            # print(f"Raw camera error: {e}", file=sys.__stderr__) # Example for deep debug
-            return None
+            _log_camera_message(f"Error during photo capture: {e}", "ERROR")
+            return False
 
     if capture_success:
-        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
-            _log_camera_message(f"Photo saved successfully to {output_file}", "SUCCESS")
-            return output_file
-        else:
-            _log_camera_message(f"Photo capture reported success, but file is missing or empty: {output_file}", "ERROR")
-            return None
+        _log_camera_message(f"Photo captured successfully: {output_file}", "SUCCESS")
+        return True
     else:
-        # This path should ideally not be reached if exceptions are caught correctly
-        _log_camera_message("Photo capture failed due to an unspecified issue.", "ERROR")
-        return None
+        _log_camera_message("Photo capture failed", "ERROR")
+        return False
 
 # Example of calling the function (will run when this script is executed directly)
 if __name__ == "__main__":
@@ -313,10 +314,10 @@ if __name__ == "__main__":
     _log_camera_message("Attempting to take photo...", "STATUS")
     
     # Test with specified or default parameters
-    image_path = takePhoto(output_file=output_filename, resolution=current_resolution)
+    capture_success = takePhoto(output_dir='images', output_filename=output_filename, width=current_resolution[0], height=current_resolution[1])
     
-    if image_path:
-        _log_camera_message(f"Test photo capture successful. Image at: {image_path}", "SUCCESS")
+    if capture_success:
+        _log_camera_message("Test photo capture successful.", "SUCCESS")
     else:
         _log_camera_message("Test photo capture failed.", "ERROR")
         if not IS_RASPBERRY_PI:

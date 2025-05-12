@@ -329,34 +329,31 @@ printf "\n--- Performance Settings ---\n"
 printf "Using multiprocessing with 4 processes\n"
 
 # Write to config.json
-printf "{
-  \"Camera\": {
-    \"width\": %d,
-    \"height\": %d
+cat > "$CONFIG_FILE" << EOF
+{
+  "Camera": {
+    "width": $CAM_WIDTH,
+    "height": $CAM_HEIGHT
   },
-  \"Model\": {
-    \"NAME\": \"%s\",
-    \"CONFIDENCE\": %s,
-    \"IOU\": %s,
-    \"CLASSES\": %s
+  "Model": {
+    "NAME": "$MODEL_NAME",
+    "CONFIDENCE": $MODEL_CONFIDENCE,
+    "IOU": $MODEL_IOU,
+    "CLASSES": $MODEL_CLASSES
   },
-  \"Output\": {
-    \"VERBOSE\": %s,
-    \"SUPER_QUIET\": %s,
-    \"SUMMARY_ONLY\": false, 
-    \"EXTRA_VERBOSE\": false 
+  "Output": {
+    "VERBOSE": $OUTPUT_VERBOSE,
+    "SUPER_QUIET": $OUTPUT_SUPER_QUIET,
+    "SUMMARY_ONLY": false,
+    "EXTRA_VERBOSE": false
   },
-  \"DEBUG_MODE\": %s,
-  \"MultiProcessing\": {
-    \"ENABLED\": %s,
-    \"NUM_PROCESSES\": %d
+  "DEBUG_MODE": $DEBUG_MODE,
+  "MultiProcessing": {
+    "ENABLED": $MULTIPROC_ENABLED,
+    "NUM_PROCESSES": $MULTIPROC_NUM_PROCESSES
   }
 }
-" "$CAM_WIDTH" "$CAM_HEIGHT" \
-  "$MODEL_NAME" "$MODEL_CONFIDENCE" "$MODEL_IOU" "$MODEL_CLASSES" \
-  "$OUTPUT_VERBOSE" "$OUTPUT_SUPER_QUIET" \
-  "$DEBUG_MODE" \
-  "$MULTIPROC_ENABLED" "$MULTIPROC_NUM_PROCESSES" > "$CONFIG_FILE"
+EOF
 
 printf "\nConfiguration saved to %s\n" "$CONFIG_FILE"
 
