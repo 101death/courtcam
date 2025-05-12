@@ -186,3 +186,4 @@ images/debug/
 test_output/
 models/
 images/output.png
+config.json
