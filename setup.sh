@@ -193,92 +193,22 @@ run_with_spinner "pip install ultralytics" "Installing ultralytics"
 tput bold
 printf "\nModel downloads:\n"
 tput sgr0
-declare -A MODEL_URLS=(
-  ["yolov5n"]="https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5n.pt"
-  ["yolov5s"]="https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5s.pt"
-  ["yolov5m"]="https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5m.pt"
-  ["yolov5l"]="https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5l.pt"
-  ["yolov5x"]="https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5x.pt"
-  ["yolov8n"]="https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt"
-  ["yolov8s"]="https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8s.pt"
-  ["yolov8m"]="https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8m.pt"
-  ["yolov8l"]="https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8l.pt"
-  ["yolov8x"]="https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8x.pt"
-)
 
-# Create an indexed array of model names
-MODEL_NAMES_ORDERED=()
-# shellcheck disable=SC2034 # Used indirectly via MODEL_URLS key
-for model in yolov8n yolov8s yolov8m yolov8l yolov8x yolov5n yolov5s yolov5m yolov5l yolov5x; do
-  if [[ -v MODEL_URLS[$model] ]]; then
-    MODEL_NAMES_ORDERED+=("$model")
-  fi
-done
+# Download default model (yolov8x)
+MODEL_URL="https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8x.pt"
+TARGET_FILE="models/yolov8x.pt"
 
-printf "Select a model to download (or skip):
-"
-for i in "${!MODEL_NAMES_ORDERED[@]}"; do
-  model_name="${MODEL_NAMES_ORDERED[$i]}"
-  if [ -f "models/$model_name.pt" ]; then
-    printf "  %d. %s (already downloaded)
-" "$((i+1))" "$model_name"
+if [ -f "$TARGET_FILE" ]; then
+  printf "Default model yolov8x already downloaded.\n"
+else
+  printf "Downloading default model (yolov8x)...\n"
+  if curl -sL "$MODEL_URL" -o "$TARGET_FILE" & spinner $! "Downloading yolov8x..."; then
+    printf "✓ Downloaded yolov8x successfully\n"
   else
-    printf "  %d. %s
-" "$((i+1))" "$model_name"
+    printf "✗ Failed to download yolov8x\n"
+    rm -f "$TARGET_FILE" 2>/dev/null # Clean up partial download
   fi
-done
-printf "  0. Skip download
-"
-
-while true; do
-  read -rp "Enter number to download [0]: " choice
-  choice=${choice:-0}
-
-  if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 0 ] && [ "$choice" -le "${#MODEL_NAMES_ORDERED[@]}" ]; then
-    if [ "$choice" -eq 0 ]; then
-      printf "Skipping model download.
-"
-      break
-    fi
-    
-    selected_index=$((choice-1))
-    model="${MODEL_NAMES_ORDERED[$selected_index]}"
-    url="${MODEL_URLS[$model]}"
-    target_file="models/$model.pt"
-
-    if [ -f "$target_file" ]; then
-      printf "%s already downloaded. Skipping.
-" "$model"
-      break # Exit loop after confirming existing file
-    fi
-
-    tput bold
-    printf "  Downloading %s... " "$model"
-    tput sgr0
-    if curl -sL "$url" -o "$target_file" & spinner $! "  Downloading $model..."; then
-      tput bold
-      printf "
-  Downloading %s... " "$model"
-      tput sgr0
-      printf "✓
-"
-    else
-      tput bold
-      printf "
-  Downloading %s... " "$model"
-      tput sgr0
-      printf "✗
-"
-      rm -f "$target_file" 2>/dev/null # Clean up partial download
-      printf "Failed to download %s.
-" "$model"
-    fi
-    break # Exit loop after download attempt
-  else
-    printf "Invalid selection. Please enter a number between 0 and %s.
-" "${#MODEL_NAMES_ORDERED[@]}"
-  fi
-done
+fi
 
 # --- Configuration Section ---
 tput bold
@@ -385,41 +315,18 @@ done
 
 printf "\n--- Model Settings ---\n"
 MODELS_DIR="models"
-AVAILABLE_MODELS=()
-if [ -d "$MODELS_DIR" ]; then
-  for f in "$MODELS_DIR"/*.pt; do
-    [ -e "$f" ] && AVAILABLE_MODELS+=("$(basename "$f")")
-  done
-fi
-
-COMMON_MODELS=("yolov8n.pt" "yolov8s.pt" "yolov8m.pt" "yolov8x.pt" "yolov5s.pt" "yolov5m.pt")
-ALL_CHOICES=()
-TEMP_CHOICES=("${AVAILABLE_MODELS[@]}" "${COMMON_MODELS[@]}")
-# Deduplicate and sort
-# shellcheck disable=SC2207
-ALL_CHOICES=( $(printf "%s\n" "${TEMP_CHOICES[@]}" | sort -u) )
-
-if [ ${#ALL_CHOICES[@]} -eq 0 ]; then
-  printf "No models found in ./models/ or common models list.\n"
-  read -rp "Enter desired model name (e.g., yolov8x, default: $MODEL_NAME): " model_name_input
-  MODEL_NAME=${model_name_input:-$MODEL_NAME}
-  # Ensure .pt is not part of the name for config, main.py adds it if needed for download
-  MODEL_NAME=${MODEL_NAME%.pt}
-else
-  SELECTED_MODEL_FILE=$(select_from_list "Select default YOLO model (current: $MODEL_NAME.pt):" "${ALL_CHOICES[@]}")
-  MODEL_NAME=${SELECTED_MODEL_FILE%.pt} # Store without .pt
-fi
-
-printf "Model confidence threshold set to %s.\n" "$MODEL_CONFIDENCE"
+MODEL_NAME="yolov8x"
+printf "Using default model: %s\n" "$MODEL_NAME"
+printf "Model confidence threshold set to %s\n" "$MODEL_CONFIDENCE"
 
 printf "\n--- Output Settings ---\n"
-printf "Output verbosity set to standard (Verbose: %s, Super Quiet: %s).\n" "$OUTPUT_VERBOSE" "$OUTPUT_SUPER_QUIET"
+printf "Using standard output settings\n"
 
 printf "\n--- Debug Settings ---\n"
-printf "Debug mode set to %s.\n" "$DEBUG_MODE"
+printf "Debug mode disabled\n"
 
 printf "\n--- Performance Settings ---\n"
-printf "Multiprocessing set to %s with %s processes.\n" "$MULTIPROC_ENABLED" "$MULTIPROC_NUM_PROCESSES"
+printf "Using multiprocessing with 4 processes\n"
 
 # Write to config.json
 printf "{
