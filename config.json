@@ -1,0 +1,25 @@
+{
+  "Camera": {
+    "width": 1280,
+    "height": 720
+  },
+  "Model": {
+    "NAME": "yolov8n",
+    "CONFIDENCE": 0.1,
+    "IOU": 0.45,
+    "CLASSES": [
+      0
+    ]
+  },
+  "Output": {
+    "VERBOSE": false,
+    "SUPER_QUIET": false,
+    "SUMMARY_ONLY": false,
+    "EXTRA_VERBOSE": false
+  },
+  "DEBUG_MODE": false,
+  "MultiProcessing": {
+    "ENABLED": true,
+    "NUM_PROCESSES": 4
+  }
+} 

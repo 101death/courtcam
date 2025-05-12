@@ -205,28 +205,77 @@ declare -A MODEL_URLS=(
   ["yolov8x"]="https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8x.pt"
 )
 
-for model in "${!MODEL_URLS[@]}"; do
-  if [ -f "models/$model.pt" ]; then
-    printf "  %s already downloaded\n" "$model"
+# Create an indexed array of model names
+MODEL_NAMES_ORDERED=()
+# shellcheck disable=SC2034 # Used indirectly via MODEL_URLS key
+for model in yolov8n yolov8s yolov8m yolov8l yolov8x yolov5n yolov5s yolov5m yolov5l yolov5x; do
+  if [[ -v MODEL_URLS[$model] ]]; then
+    MODEL_NAMES_ORDERED+=("$model")
+  fi
+done
+
+printf "Select a model to download (or skip):
+"
+for i in "${!MODEL_NAMES_ORDERED[@]}"; do
+  model_name="${MODEL_NAMES_ORDERED[$i]}"
+  if [ -f "models/$model_name.pt" ]; then
+    printf "  %d. %s (already downloaded)
+" "$((i+1))" "$model_name"
   else
-    read -rp "Download $model? [y/N]: " ynm
-    if [[ $ynm =~ ^[Yy] ]]; then
-      tput bold
-      printf "  %s... " "$model"
-      tput sgr0
-      if curl -sL "${MODEL_URLS[$model]}" -o "models/$model.pt" & spinner $! "  $model..."; then
-        tput bold
-        printf "\r  %s... " "$model"
-        tput sgr0
-        printf "✓\n"
-      else
-        tput bold
-        printf "\r  %s... " "$model"
-        tput sgr0
-        printf "✗\n"
-        rm -f "models/$model.pt" 2>/dev/null
-      fi
+    printf "  %d. %s
+" "$((i+1))" "$model_name"
+  fi
+done
+printf "  0. Skip download
+"
+
+while true; do
+  read -rp "Enter number to download [0]: " choice
+  choice=${choice:-0}
+
+  if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 0 ] && [ "$choice" -le "${#MODEL_NAMES_ORDERED[@]}" ]; then
+    if [ "$choice" -eq 0 ]; then
+      printf "Skipping model download.
+"
+      break
     fi
+    
+    selected_index=$((choice-1))
+    model="${MODEL_NAMES_ORDERED[$selected_index]}"
+    url="${MODEL_URLS[$model]}"
+    target_file="models/$model.pt"
+
+    if [ -f "$target_file" ]; then
+      printf "%s already downloaded. Skipping.
+" "$model"
+      break # Exit loop after confirming existing file
+    fi
+
+    tput bold
+    printf "  Downloading %s... " "$model"
+    tput sgr0
+    if curl -sL "$url" -o "$target_file" & spinner $! "  Downloading $model..."; then
+      tput bold
+      printf "
+  Downloading %s... " "$model"
+      tput sgr0
+      printf "✓
+"
+    else
+      tput bold
+      printf "
+  Downloading %s... " "$model"
+      tput sgr0
+      printf "✗
+"
+      rm -f "$target_file" 2>/dev/null # Clean up partial download
+      printf "Failed to download %s.
+" "$model"
+    fi
+    break # Exit loop after download attempt
+  else
+    printf "Invalid selection. Please enter a number between 0 and %s.
+" "${#MODEL_NAMES_ORDERED[@]}"
   fi
 done
 
@@ -237,219 +286,173 @@ tput sgr0
 
 CONFIG_FILE="config.json"
 
-# Helper functions for user input
-ask_yes_no() {
-  local prompt="$1"
-  local default="$2"
-  local answer
-  while true; do
-    read -rp "$prompt [Y/n] " answer
-    answer=${answer:-$default}
-    case "$answer" in
-      [Yy]* ) return 0;;
-      [Nn]* ) return 1;;
-      * ) printf "Please answer yes or no.\n";;
-    esac
-  done
-}
+# Check if config file already exists
+if [ -f "$CONFIG_FILE" ]; then
+  printf "\nFound existing %s. Skipping configuration steps.\n" "$CONFIG_FILE"
+else 
+  # If config doesn't exist, proceed with simplified setup
+  printf "No %s found. Proceeding with default configuration setup.\n" "$CONFIG_FILE"
 
-get_int_input() {
-  local prompt="$1"
-  local default="$2"
-  local value
-  while true; do
-    read -rp "$prompt (default: $default): " value
-    value=${value:-$default}
-    if [[ "$value" =~ ^[0-9]+$ ]]; then
-      echo "$value"
-      return 0
-    else
-      printf "Invalid input. Please enter a number.\n"
+  # Helper functions for user input (only select_from_list needed now)
+  select_from_list() {
+    local prompt="$1"
+    shift
+    local options=("$@")
+    local default_selection="$1" # Default is the first option passed if no explicit default
+    
+    if [ $# -eq 0 ]; then
+      printf "No options available for %s.\n" "$prompt"
+      echo ""
+      return 1
     fi
-  done
-}
 
-get_float_input() {
-  local prompt="$1"
-  local default="$2"
-  local value
-  while true; do
-    read -rp "$prompt (default: $default): " value
-    value=${value:-$default}
-    if [[ "$value" =~ ^[0-9]*\.?[0-9]+$ ]]; then
-      echo "$value"
-      return 0
-    else
-      printf "Invalid input. Please enter a floating point number (e.g., 0.1).\n"
-    fi
-  done
-}
+    printf "%s\n" "$prompt"
+    for i in "${!options[@]}"; do
+      printf "  %d. %s\n" "$((i+1))" "${options[$i]}"
+    done
+    
+    local choice
+    while true; do
+      read -rp "Enter number (default: 1. ${options[0]}): " choice
+      choice=${choice:-1}
+      if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#options[@]}" ]; then
+        echo "${options[$((choice-1))]}"
+        return 0
+      else
+        printf "Invalid selection. Please enter a number between 1 and %s.\n" "${#options[@]}"
+      fi
+    done
+  }
 
-select_from_list() {
-  local prompt="$1"
-  shift
-  local options=("$@")
-  local default_selection="$1" # Default is the first option passed if no explicit default
-  
-  if [ $# -eq 0 ]; then
-    printf "No options available for %s.\n" "$prompt"
-    echo ""
-    return 1
+  # Default values
+  CAM_WIDTH=1280
+  CAM_HEIGHT=720
+  MODEL_NAME="yolov8x"
+  MODEL_CONFIDENCE=0.25
+  MODEL_IOU=0.45
+  MODEL_CLASSES="[0]"
+  OUTPUT_VERBOSE="false"
+  OUTPUT_SUPER_QUIET="false"
+  DEBUG_MODE="false"
+  MULTIPROC_ENABLED="true"
+  MULTIPROC_NUM_PROCESSES=2
+
+  # Load existing config if present
+  if [ -f "$CONFIG_FILE" ]; then
+    printf "Found existing %s. Loading current values for applicable settings.\n" "$CONFIG_FILE"
+    # Basic parsing - assumes jq is not available for robustness
+    # This is a simplified parser. A more robust solution might use Python or jq.
+    # Camera settings will use script defaults unless overwritten by a future, more complex setup
+    # CAM_WIDTH, CAM_HEIGHT will use the new script defaults.
+
+    CURRENT_MODEL_NAME=$(grep '"NAME"' "$CONFIG_FILE" | sed -e 's/.*: *\"([^\"]*)\".*/\1/' || echo "$MODEL_NAME")
+    MODEL_NAME=${CURRENT_MODEL_NAME:-$MODEL_NAME}
+    
+    # MODEL_CONFIDENCE will use the new script default.
+    # OUTPUT_VERBOSE will use the new script default.
+    # DEBUG_MODE will use the new script default.
+    # MULTIPROC_ENABLED and NUM_PROCESSES will use new script defaults.
   fi
 
-  printf "%s\n" "$prompt"
-  for i in "${!options[@]}"; do
-    printf "  %d. %s\n" "$((i+1))" "${options[$i]}"
-  done
-  
-  local choice
-  while true; do
-    read -rp "Enter number (default: 1. ${options[0]}): " choice
-    choice=${choice:-1}
-    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#options[@]}" ]; then
-      echo "${options[$((choice-1))]}"
-      return 0
-    else
-      printf "Invalid selection. Please enter a number between 1 and %s.\n" "${#options[@]}"
-    fi
-  done
-}
+  printf "\n--- Camera Settings ---\n"
+  # RESOLUTIONS=("Low (640x480)" "HD (1280x720)" "Full HD (1920x1080)" "Custom") # Removed selection
+  # SELECTED_RES_KEY=$(select_from_list "Select camera capture resolution:" "${RESOLUTIONS[@]}")
 
-# Default values
-CAM_WIDTH=1280
-CAM_HEIGHT=720
-MODEL_NAME="yolov8x"
-MODEL_CONFIDENCE=0.1
-MODEL_IOU=0.45 # Not currently in config.json structure from Python, but good to have
-MODEL_CLASSES="[0]" # Represent as string for now, will be array in JSON
-OUTPUT_VERBOSE="true"
-OUTPUT_SUPER_QUIET="false"
-DEBUG_MODE="false"
-MULTIPROC_ENABLED="true"
-MULTIPROC_NUM_PROCESSES=4
+  # case "$SELECTED_RES_KEY" in
+  #   "Low (640x480)") CAM_WIDTH=640; CAM_HEIGHT=480 ;; 
+  #   "HD (1280x720)") CAM_WIDTH=1280; CAM_HEIGHT=720 ;; 
+  #   "Full HD (1920x1080)") CAM_WIDTH=1920; CAM_HEIGHT=1080 ;; 
+  #   "Custom") 
+  #     CAM_WIDTH=$(get_int_input "Enter custom width:" "$CAM_WIDTH")
+  #     CAM_HEIGHT=$(get_int_input "Enter custom height:" "$CAM_HEIGHT")
+  #     ;;
+  # esac
+  printf "Default camera resolution set to %sx%s.\n" "$CAM_WIDTH" "$CAM_HEIGHT"
 
-# Load existing config if present
-if [ -f "$CONFIG_FILE" ]; then
-  printf "Found existing %s. Loading current values.\n" "$CONFIG_FILE"
-  # Basic parsing - assumes jq is not available for robustness
-  # This is a simplified parser. A more robust solution might use Python or jq.
-  CURRENT_CAM_WIDTH=$(grep '"width"' "$CONFIG_FILE" | sed 's/.*: *\([0-9]*\).*/\1/' || echo "$CAM_WIDTH")
-  CAM_WIDTH=${CURRENT_CAM_WIDTH:-$CAM_WIDTH}
-  
-  CURRENT_CAM_HEIGHT=$(grep '"height"' "$CONFIG_FILE" | sed 's/.*: *\([0-9]*\).*/\1/' || echo "$CAM_HEIGHT")
-  CAM_HEIGHT=${CURRENT_CAM_HEIGHT:-$CAM_HEIGHT}
-  
-  CURRENT_MODEL_NAME=$(grep '"NAME"' "$CONFIG_FILE" | sed -e 's/.*: *"\([^\"]*\)".*/\1/' || echo "$MODEL_NAME")
-  MODEL_NAME=${CURRENT_MODEL_NAME:-$MODEL_NAME}
-  
-  CURRENT_MODEL_CONFIDENCE=$(grep '"CONFIDENCE"' "$CONFIG_FILE" | sed 's/.*: *\([0-9.]*\).*/\1/' || echo "$MODEL_CONFIDENCE")
-  MODEL_CONFIDENCE=${CURRENT_MODEL_CONFIDENCE:-$MODEL_CONFIDENCE}
 
-  CURRENT_OUTPUT_VERBOSE=$(grep '"VERBOSE"' "$CONFIG_FILE" | sed 's/.*: *\(true\|false\).*/\1/' || echo "$OUTPUT_VERBOSE")
-  OUTPUT_VERBOSE=${CURRENT_OUTPUT_VERBOSE:-$OUTPUT_VERBOSE}
+  printf "\n--- Model Settings ---\n"
+  MODELS_DIR="models"
+  AVAILABLE_MODELS=()
+  if [ -d "$MODELS_DIR" ]; then
+    for f in "$MODELS_DIR"/*.pt; do
+      [ -e "$f" ] && AVAILABLE_MODELS+=("$(basename "$f")")
+    done
+  fi
 
-  CURRENT_DEBUG_MODE=$(grep '"DEBUG_MODE"' "$CONFIG_FILE" | sed 's/.*: *\(true\|false\).*/\1/' || echo "$DEBUG_MODE")
-  DEBUG_MODE=${CURRENT_DEBUG_MODE:-$DEBUG_MODE}
+  COMMON_MODELS=("yolov8n.pt" "yolov8s.pt" "yolov8m.pt" "yolov8x.pt" "yolov5s.pt" "yolov5m.pt")
+  ALL_CHOICES=()
+  TEMP_CHOICES=("${AVAILABLE_MODELS[@]}" "${COMMON_MODELS[@]}")
+  # Deduplicate and sort
+  # shellcheck disable=SC2207
+  ALL_CHOICES=( $(printf "%s\n" "${TEMP_CHOICES[@]}" | sort -u) )
 
-  CURRENT_MULTIPROC_ENABLED=$(grep '"ENABLED"' "$CONFIG_FILE" | sed 's/.*"MultiProcessing".*"ENABLED": *\(true\|false\).*/\1/' || echo "$MULTIPROC_ENABLED")
-  MULTIPROC_ENABLED=${CURRENT_MULTIPROC_ENABLED:-$MULTIPROC_ENABLED}
+  if [ ${#ALL_CHOICES[@]} -eq 0 ]; then
+    printf "No models found in ./models/ or common models list.\n"
+    read -rp "Enter desired model name (e.g., yolov8x, default: $MODEL_NAME): " model_name_input
+    MODEL_NAME=${model_name_input:-$MODEL_NAME}
+    # Ensure .pt is not part of the name for config, main.py adds it if needed for download
+    MODEL_NAME=${MODEL_NAME%.pt}
+  else
+    SELECTED_MODEL_FILE=$(select_from_list "Select default YOLO model (current: $MODEL_NAME.pt):" "${ALL_CHOICES[@]}")
+    MODEL_NAME=${SELECTED_MODEL_FILE%.pt} # Store without .pt
+  fi
 
-  CURRENT_MULTIPROC_NUM_PROCESSES=$(grep '"NUM_PROCESSES"' "$CONFIG_FILE" | sed 's/.*"NUM_PROCESSES": *\([0-9]*\).*/\1/' || echo "$MULTIPROC_NUM_PROCESSES")
-  MULTIPROC_NUM_PROCESSES=${CURRENT_MULTIPROC_NUM_PROCESSES:-$MULTIPROC_NUM_PROCESSES}
-fi
+  # MODEL_CONFIDENCE=$(get_float_input "Set model confidence threshold (0.0-1.0, current: $MODEL_CONFIDENCE):" "$MODEL_CONFIDENCE") # Removed
+  printf "Model confidence threshold set to %s.\n" "$MODEL_CONFIDENCE"
 
-printf "\n--- Camera Settings ---\n"
-RESOLUTIONS=("Low (640x480)" "HD (1280x720)" "Full HD (1920x1080)" "Custom")
-SELECTED_RES_KEY=$(select_from_list "Select camera capture resolution:" "${RESOLUTIONS[@]}")
+  printf "\n--- Output Settings ---\n"
+  # if ask_yes_no "Enable verbose output (current: $OUTPUT_VERBOSE)?" "y"; then OUTPUT_VERBOSE="true"; else OUTPUT_VERBOSE="false"; fi # Removed
+  # if [ "$OUTPUT_VERBOSE" = "false" ]; then # Removed
+  #   if ask_yes_no "Enable super quiet mode (minimal output)?" "n"; then OUTPUT_SUPER_QUIET="true"; else OUTPUT_SUPER_QUIET="false"; fi # Removed
+  # else # Removed
+  #   OUTPUT_SUPER_QUIET="false" # Removed
+  # fi # Removed
+  printf "Output verbosity set to standard (Verbose: %s, Super Quiet: %s).\n" "$OUTPUT_VERBOSE" "$OUTPUT_SUPER_QUIET"
 
-case "$SELECTED_RES_KEY" in
-  "Low (640x480)") CAM_WIDTH=640; CAM_HEIGHT=480 ;; 
-  "HD (1280x720)") CAM_WIDTH=1280; CAM_HEIGHT=720 ;; 
-  "Full HD (1920x1080)") CAM_WIDTH=1920; CAM_HEIGHT=1080 ;; 
-  "Custom") 
-    CAM_WIDTH=$(get_int_input "Enter custom width:" "$CAM_WIDTH")
-    CAM_HEIGHT=$(get_int_input "Enter custom height:" "$CAM_HEIGHT")
-    ;;
-esac
+  printf "\n--- Debug Settings ---\n"
+  # if ask_yes_no "Enable debug mode (saves intermediate images, current: $DEBUG_MODE)?" "n"; then DEBUG_MODE="true"; else DEBUG_MODE="false"; fi # Removed
+  printf "Debug mode set to %s.\n" "$DEBUG_MODE"
 
-printf "\n--- Model Settings ---\n"
-MODELS_DIR="models"
-AVAILABLE_MODELS=()
-if [ -d "$MODELS_DIR" ]; then
-  for f in "$MODELS_DIR"/*.pt; do
-    [ -e "$f" ] && AVAILABLE_MODELS+=("$(basename "$f")")
-  done
-fi
+  printf "\n--- Performance Settings ---\n"
+  # if ask_yes_no "Enable multiprocessing (current: $MULTIPROC_ENABLED)?" "y"; then MULTIPROC_ENABLED="true"; else MULTIPROC_ENABLED="false"; fi # Removed
+  # if [ "$MULTIPROC_ENABLED" = "true" ]; then # Removed
+  #   CPU_CORES=$(nproc --all || echo 4) # Get CPU cores, default 4 # Removed
+  #   MULTIPROC_NUM_PROCESSES=$(get_int_input "Number of processes to use (recommended: up to $CPU_CORES, current: $MULTIPROC_NUM_PROCESSES):" "$MULTIPROC_NUM_PROCESSES") # Removed
+  # fi # Removed
+  printf "Multiprocessing set to %s with %s processes.\n" "$MULTIPROC_ENABLED" "$MULTIPROC_NUM_PROCESSES"
 
-COMMON_MODELS=("yolov8n.pt" "yolov8s.pt" "yolov8m.pt" "yolov8x.pt" "yolov5s.pt" "yolov5m.pt")
-ALL_CHOICES=()
-TEMP_CHOICES=("${AVAILABLE_MODELS[@]}" "${COMMON_MODELS[@]}")
-# Deduplicate and sort
-# shellcheck disable=SC2207
-ALL_CHOICES=( $(printf "%s\n" "${TEMP_CHOICES[@]}" | sort -u) )
-
-if [ ${#ALL_CHOICES[@]} -eq 0 ]; then
-  printf "No models found in ./models/ or common models list.\n"
-  read -rp "Enter desired model name (e.g., yolov8x, default: $MODEL_NAME): " model_name_input
-  MODEL_NAME=${model_name_input:-$MODEL_NAME}
-  # Ensure .pt is not part of the name for config, main.py adds it if needed for download
-  MODEL_NAME=${MODEL_NAME%.pt}
-else
-  SELECTED_MODEL_FILE=$(select_from_list "Select default YOLO model (current: $MODEL_NAME.pt):" "${ALL_CHOICES[@]}")
-  MODEL_NAME=${SELECTED_MODEL_FILE%.pt} # Store without .pt
-fi
-
-MODEL_CONFIDENCE=$(get_float_input "Set model confidence threshold (0.0-1.0, current: $MODEL_CONFIDENCE):" "$MODEL_CONFIDENCE")
-
-printf "\n--- Output Settings ---\n"
-if ask_yes_no "Enable verbose output (current: $OUTPUT_VERBOSE)?" "y"; then OUTPUT_VERBOSE="true"; else OUTPUT_VERBOSE="false"; fi
-if [ "$OUTPUT_VERBOSE" = "false" ]; then
-  if ask_yes_no "Enable super quiet mode (minimal output)?" "n"; then OUTPUT_SUPER_QUIET="true"; else OUTPUT_SUPER_QUIET="false"; fi
-else
-  OUTPUT_SUPER_QUIET="false"
-fi
-
-printf "\n--- Debug Settings ---\n"
-if ask_yes_no "Enable debug mode (saves intermediate images, current: $DEBUG_MODE)?" "n"; then DEBUG_MODE="true"; else DEBUG_MODE="false"; fi
-
-printf "\n--- Performance Settings ---\n"
-if ask_yes_no "Enable multiprocessing (current: $MULTIPROC_ENABLED)?" "y"; then MULTIPROC_ENABLED="true"; else MULTIPROC_ENABLED="false"; fi
-if [ "$MULTIPROC_ENABLED" = "true" ]; then
-  CPU_CORES=$(nproc --all || echo 4) # Get CPU cores, default 4
-  MULTIPROC_NUM_PROCESSES=$(get_int_input "Number of processes to use (recommended: up to $CPU_CORES, current: $MULTIPROC_NUM_PROCESSES):" "$MULTIPROC_NUM_PROCESSES")
-fi
-
-# Write to config.json
-printf "{
-  \"Camera\": {
-    \"width\": %d,
-    \"height\": %d
-  },
-  \"Model\": {
-    \"NAME\": \"%s\",
-    \"CONFIDENCE\": %s,
-    \"IOU\": %s,
-    \"CLASSES\": %s
-  },
-  \"Output\": {
-    \"VERBOSE\": %s,
-    \"SUPER_QUIET\": %s,
-    \"SUMMARY_ONLY\": false, 
-    \"EXTRA_VERBOSE\": false 
-  },
-  \"DEBUG_MODE\": %s,
-  \"MultiProcessing\": {
-    \"ENABLED\": %s,
-    \"NUM_PROCESSES\": %d
+  # Write to config.json
+  printf "{
+    \"Camera\": {
+      \"width\": %d,
+      \"height\": %d
+    },
+    \"Model\": {
+      \"NAME\": \"%s\",
+      \"CONFIDENCE\": %s,
+      \"IOU\": %s,
+      \"CLASSES\": %s
+    },
+    \"Output\": {
+      \"VERBOSE\": %s,
+      \"SUPER_QUIET\": %s,
+      \"SUMMARY_ONLY\": false, 
+      \"EXTRA_VERBOSE\": false 
+    },
+    \"DEBUG_MODE\": %s,
+    \"MultiProcessing\": {
+      \"ENABLED\": %s,
+      \"NUM_PROCESSES\": %d
+    }
   }
-}
-" "$CAM_WIDTH" "$CAM_HEIGHT" \
-  "$MODEL_NAME" "$MODEL_CONFIDENCE" "$MODEL_IOU" "$MODEL_CLASSES" \
-  "$OUTPUT_VERBOSE" "$OUTPUT_SUPER_QUIET" \
-  "$DEBUG_MODE" \
-  "$MULTIPROC_ENABLED" "$MULTIPROC_NUM_PROCESSES" > "$CONFIG_FILE"
+  " "$CAM_WIDTH" "$CAM_HEIGHT" \
+    "$MODEL_NAME" "$MODEL_CONFIDENCE" "$MODEL_IOU" "$MODEL_CLASSES" \
+    "$OUTPUT_VERBOSE" "$OUTPUT_SUPER_QUIET" \
+    "$DEBUG_MODE" \
+    "$MULTIPROC_ENABLED" "$MULTIPROC_NUM_PROCESSES" > "$CONFIG_FILE"
 
-printf "\nConfiguration saved to %s\n" "$CONFIG_FILE"
+  printf "\nConfiguration saved to %s\n" "$CONFIG_FILE"
+fi # End of check for existing config file
 
 # --- End Configuration Section ---
 
