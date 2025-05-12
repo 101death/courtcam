@@ -333,7 +333,7 @@ OUTPUT_VERBOSE="false"
 OUTPUT_SUPER_QUIET="false"
 DEBUG_MODE="false"
 MULTIPROC_ENABLED="true"
-MULTIPROC_NUM_PROCESSES=2
+MULTIPROC_NUM_PROCESSES=4
 
 # Load existing config if present (this part is crucial and remains)
 if [ -f "$CONFIG_FILE" ]; then
@@ -353,7 +353,35 @@ if [ -f "$CONFIG_FILE" ]; then
 fi
 
 printf "\n--- Camera Settings ---\n"
-printf "Default camera resolution set to %sx%s.\n" "$CAM_WIDTH" "$CAM_HEIGHT"
+RESOLUTIONS=(
+  "1280x720 (HD - Recommended)"
+  "1920x1080 (Full HD)"
+  "640x480 (VGA)"
+  "800x600 (SVGA)"
+  "1024x768 (XGA)"
+)
+
+printf "Select camera resolution:\n"
+for i in "${!RESOLUTIONS[@]}"; do
+  printf "  %d. %s\n" "$((i+1))" "${RESOLUTIONS[$i]}"
+done
+
+while true; do
+  read -rp "Enter number (default: 1. ${RESOLUTIONS[0]}): " choice
+  choice=${choice:-1}
+  if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#RESOLUTIONS[@]}" ]; then
+    selected_res="${RESOLUTIONS[$((choice-1))]}"
+    # Extract resolution values using regex
+    if [[ $selected_res =~ ([0-9]+)x([0-9]+) ]]; then
+      CAM_WIDTH="${BASH_REMATCH[1]}"
+      CAM_HEIGHT="${BASH_REMATCH[2]}"
+      printf "Camera resolution set to %sx%s.\n" "$CAM_WIDTH" "$CAM_HEIGHT"
+      break
+    fi
+  else
+    printf "Invalid selection. Please enter a number between 1 and %s.\n" "${#RESOLUTIONS[@]}"
+  fi
+done
 
 printf "\n--- Model Settings ---\n"
 MODELS_DIR="models"
