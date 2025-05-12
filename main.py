@@ -236,6 +236,56 @@ class Config:
         NUM_PROCESSES = 4           # Number of CPU cores to use
         CHUNK_SIZE = 75             # Chunk size for processing
 
+    # Camera settings (New)
+    class Camera:
+        WIDTH = 1280
+        HEIGHT = 720
+
+# === Load Configuration from JSON if it exists ===
+CONFIG_FILE = "config.json"
+if os.path.exists(CONFIG_FILE):
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            _loaded_config = json.load(f)
+            # OutputManager should be defined by now if this is placed correctly
+            OutputManager.log(f"Loaded configuration from {CONFIG_FILE}", "DEBUG")
+
+            # Update Config class attributes directly
+            # Camera settings
+            if "Camera" in _loaded_config and isinstance(_loaded_config["Camera"], dict):
+                Config.Camera.WIDTH = _loaded_config["Camera"].get("width", Config.Camera.WIDTH)
+                Config.Camera.HEIGHT = _loaded_config["Camera"].get("height", Config.Camera.HEIGHT)
+            
+            # Model settings
+            if "Model" in _loaded_config and isinstance(_loaded_config["Model"], dict):
+                Config.Model.NAME = _loaded_config["Model"].get("NAME", Config.Model.NAME)
+                Config.Model.CONFIDENCE = _loaded_config["Model"].get("CONFIDENCE", Config.Model.CONFIDENCE)
+                Config.Model.IOU = _loaded_config["Model"].get("IOU", Config.Model.IOU)
+                Config.Model.CLASSES = _loaded_config["Model"].get("CLASSES", Config.Model.CLASSES)
+
+            # Output settings
+            if "Output" in _loaded_config and isinstance(_loaded_config["Output"], dict):
+                Config.Output.VERBOSE = _loaded_config["Output"].get("VERBOSE", Config.Output.VERBOSE)
+                Config.Output.SUPER_QUIET = _loaded_config["Output"].get("SUPER_QUIET", Config.Output.SUPER_QUIET)
+                Config.Output.SUMMARY_ONLY = _loaded_config["Output"].get("SUMMARY_ONLY", Config.Output.SUMMARY_ONLY)
+                Config.Output.EXTRA_VERBOSE = _loaded_config["Output"].get("EXTRA_VERBOSE", Config.Output.EXTRA_VERBOSE)
+
+            # Debug mode
+            Config.DEBUG_MODE = _loaded_config.get("DEBUG_MODE", Config.DEBUG_MODE)
+            
+            # Multiprocessing settings
+            if "MultiProcessing" in _loaded_config and isinstance(_loaded_config["MultiProcessing"], dict):
+                Config.MultiProcessing.ENABLED = _loaded_config["MultiProcessing"].get("ENABLED", Config.MultiProcessing.ENABLED)
+                Config.MultiProcessing.NUM_PROCESSES = _loaded_config["MultiProcessing"].get("NUM_PROCESSES", Config.MultiProcessing.NUM_PROCESSES)
+
+    except json.JSONDecodeError:
+        OutputManager.log(f"Error reading {CONFIG_FILE}. Using default class values.", "WARNING")
+    except Exception as e:
+        OutputManager.log(f"Could not apply {CONFIG_FILE}: {e}. Using default class values.", "WARNING")
+else:
+    OutputManager.log(f"{CONFIG_FILE} not found. Using default class values.", "DEBUG")
+# === End Load Configuration ===
+
 class OutputManager:
     """
     Centralized output manager for all terminal output.
@@ -1423,7 +1473,12 @@ def main():
                 os.makedirs(camera_output_dir, exist_ok=True)
                 
                 # Call takePhoto from the imported module
-                capture_success = camera_module.takePhoto(filename=camera_output_path, output_dir=camera_output_dir) # Pass output_dir
+                capture_success = camera_module.takePhoto(
+                    filename=camera_output_path, 
+                    output_dir=camera_output_dir, 
+                    width=Config.Camera.WIDTH,  # Use width from Config
+                    height=Config.Camera.HEIGHT # Use height from Config
+                )
                 
                 if capture_success:
                     OutputManager.log("Image captured successfully from camera.", "SUCCESS")
@@ -2438,6 +2493,7 @@ def test_yolov8_detector(image_path, model_name="yolov8x.pt", confidence=0.15, v
     
     # Return the people list for use in main.py
     return people
+
 if __name__ == "__main__":
     try:
         # Add command-line arguments for easier use

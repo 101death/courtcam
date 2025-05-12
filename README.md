@@ -1,6 +1,6 @@
 # Tennis Court Detection System
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Python 3.8+](https://img.shields.io/badge/Python-3.8+-blue.svg)](#) [![OpenCV](https://img.shields.io/badge/CV-OpenCV-green.svg)](#) [![YOLO](https://img.shields.io/badge/Models-YOLOv5_|_YOLOv8+-lightgrey.svg)](#)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Python 3.8+](https://img.shields.io/badge/Python-3.8+-blue.svg)](#) [![OpenCV](https://img.shields.io/badge/CV-OpenCV-green.svg)](https://opencv.org/) [![YOLO](https://img.shields.io/badge/Models-YOLOv5_|_YOLOv8+-lightgrey.svg)](https://github.com/ultralytics/ultralytics)
 
 > Automated tennis court and player detection leveraging OpenCV and YOLO models. Optimized for Raspberry Pi but runs on standard Linux, macOS, and Windows.
 
@@ -181,3 +181,18 @@ Contributions are welcome! Please open an issue to discuss changes or submit a p
 ## 📄 License
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+
+---
+
+## ⚙️ Configuration
+
+The `setup.sh` script includes an interactive configuration step. When you run `./setup.sh`, after the initial dependency and model setup, it will ask you to configure default settings such as:
+
+*   Camera resolution
+*   Default YOLO model to use
+*   Model confidence threshold
+*   Output verbosity
+*   Debug mode
+*   Multiprocessing options
+
+Your choices will be saved in a `config.json` file. The `main.py` script will load these settings at startup. If you run `setup.sh` again, it will show you your current settings from `config.json` and allow you to change them.
