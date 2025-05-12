@@ -241,51 +241,8 @@ class Config:
         WIDTH = 1280
         HEIGHT = 720
 
-# === Load Configuration from JSON if it exists ===
-CONFIG_FILE = "config.json"
-if os.path.exists(CONFIG_FILE):
-    try:
-        with open(CONFIG_FILE, 'r') as f:
-            _loaded_config = json.load(f)
-            # OutputManager should be defined by now if this is placed correctly
-            OutputManager.log(f"Loaded configuration from {CONFIG_FILE}", "DEBUG")
-
-            # Update Config class attributes directly
-            # Camera settings
-            if "Camera" in _loaded_config and isinstance(_loaded_config["Camera"], dict):
-                Config.Camera.WIDTH = _loaded_config["Camera"].get("width", Config.Camera.WIDTH)
-                Config.Camera.HEIGHT = _loaded_config["Camera"].get("height", Config.Camera.HEIGHT)
-            
-            # Model settings
-            if "Model" in _loaded_config and isinstance(_loaded_config["Model"], dict):
-                Config.Model.NAME = _loaded_config["Model"].get("NAME", Config.Model.NAME)
-                Config.Model.CONFIDENCE = _loaded_config["Model"].get("CONFIDENCE", Config.Model.CONFIDENCE)
-                Config.Model.IOU = _loaded_config["Model"].get("IOU", Config.Model.IOU)
-                Config.Model.CLASSES = _loaded_config["Model"].get("CLASSES", Config.Model.CLASSES)
-
-            # Output settings
-            if "Output" in _loaded_config and isinstance(_loaded_config["Output"], dict):
-                Config.Output.VERBOSE = _loaded_config["Output"].get("VERBOSE", Config.Output.VERBOSE)
-                Config.Output.SUPER_QUIET = _loaded_config["Output"].get("SUPER_QUIET", Config.Output.SUPER_QUIET)
-                Config.Output.SUMMARY_ONLY = _loaded_config["Output"].get("SUMMARY_ONLY", Config.Output.SUMMARY_ONLY)
-                Config.Output.EXTRA_VERBOSE = _loaded_config["Output"].get("EXTRA_VERBOSE", Config.Output.EXTRA_VERBOSE)
-
-            # Debug mode
-            Config.DEBUG_MODE = _loaded_config.get("DEBUG_MODE", Config.DEBUG_MODE)
-            
-            # Multiprocessing settings
-            if "MultiProcessing" in _loaded_config and isinstance(_loaded_config["MultiProcessing"], dict):
-                Config.MultiProcessing.ENABLED = _loaded_config["MultiProcessing"].get("ENABLED", Config.MultiProcessing.ENABLED)
-                Config.MultiProcessing.NUM_PROCESSES = _loaded_config["MultiProcessing"].get("NUM_PROCESSES", Config.MultiProcessing.NUM_PROCESSES)
-
-    except json.JSONDecodeError:
-        OutputManager.log(f"Error reading {CONFIG_FILE}. Using default class values.", "WARNING")
-    except Exception as e:
-        OutputManager.log(f"Could not apply {CONFIG_FILE}: {e}. Using default class values.", "WARNING")
-else:
-    OutputManager.log(f"{CONFIG_FILE} not found. Using default class values.", "DEBUG")
-# === End Load Configuration ===
-
+# === Output Manager Class ===
+# Moved up to be defined before config loading
 class OutputManager:
     """
     Centralized output manager for all terminal output.
@@ -330,98 +287,110 @@ class OutputManager:
     _last_message = None
     _message_count = 0
     
+    # Use class-level config initially, can be updated later
+    _verbose = Config.Output.VERBOSE
+    _super_quiet = Config.Output.SUPER_QUIET
+    _summary_only = Config.Output.SUMMARY_ONLY
+    _extra_verbose = Config.Output.EXTRA_VERBOSE
+    _use_color = Config.Output.USE_COLOR_OUTPUT
+    _show_timestamp = Config.Output.SHOW_TIMESTAMP
+
+    @classmethod
+    def configure(cls, config_data):
+        """Configure OutputManager based on loaded config data."""
+        output_config = config_data.get('Output', {})
+        cls._verbose = output_config.get('VERBOSE', Config.Output.VERBOSE)
+        cls._super_quiet = output_config.get('SUPER_QUIET', Config.Output.SUPER_QUIET)
+        cls._summary_only = output_config.get('SUMMARY_ONLY', Config.Output.SUMMARY_ONLY)
+        cls._extra_verbose = output_config.get('EXTRA_VERBOSE', Config.Output.EXTRA_VERBOSE)
+        # Keep color and timestamp from default class config for now
+        # Could add these to config.json if needed
+
     @classmethod
     def reset_logs(cls):
-        """Reset all tracked messages"""
+        """Reset logged messages."""
         cls.warnings = []
         cls.errors = []
         cls.successes = []
         cls.info = []
         cls._last_message = None
         cls._message_count = 0
-    
+        
     @classmethod
     def _should_print_message(cls, message, level):
-        """Determine if a message should be printed based on verbosity and deduplication"""
-        # Always print errors and fatal messages
-        if level in ["ERROR", "FATAL"]:
-            return True
+        """Determine if a message should be printed based on verbosity levels."""
+        if cls._super_quiet:
+            return level in ["ERROR", "FATAL", "STATUS"]
+        if cls._summary_only:
+            return level in ["ERROR", "FATAL", "STATUS"]
             
-        # In super quiet mode, only show errors and success messages
-        if Config.Output.SUPER_QUIET and level not in ["ERROR", "SUCCESS", "FATAL", "STATUS"]:
+        if not cls._verbose and level == "DEBUG":
             return False
             
-        # Skip debug messages unless verbose
-        if level == "DEBUG" and not Config.Output.VERBOSE:
-            return False
-            
-        # Deduplicate repeated messages
-        if message == cls._last_message:
-            cls._message_count += 1
-            # Only print repeated messages if they're important or if count is low
-            if level not in ["ERROR", "FATAL", "WARNING"] and cls._message_count > 3:
-                return False
-            # For repeated messages, append count
-            if cls._message_count > 1:
-                message = f"{message} (x{cls._message_count})"
-        else:
-            cls._last_message = message
-            cls._message_count = 1
-            
+        # Prevent duplicate consecutive messages
+        # if message == cls._last_message:
+        #     cls._message_count += 1
+        #     # Print a summary message if the count reaches a certain threshold
+        #     # (This part can be complex to get right, maybe simpler to just allow repeats for now)
+        #     # sys.stdout.write(f"\r{cls._last_message} (x{cls._message_count + 1})")
+        #     # sys.stdout.flush()
+        #     return False # Don't print the duplicate yet
+        # else:
+        #     if cls._message_count > 0:
+        #         # Print the final count of the previous message
+        #         # sys.stdout.write(f"\r{cls._last_message} (x{cls._message_count + 1})\n")
+        #         # sys.stdout.flush()
+        #         pass # Decide how to handle this
+        #     cls._last_message = message
+        #     cls._message_count = 0
+        
         return True
-    
+        
     @classmethod
     def log(cls, message, level="INFO"):
-        """Log a message with appropriate colored formatting."""
+        """Log a message to the terminal with appropriate formatting and level."""
+        cls._ensure_animation_stopped() # Stop animation before printing normal log
+        
         if not cls._should_print_message(message, level):
             return
-
-        # Determine color and symbol
-        color = cls.RESET
-        symbol = ""
-        if level == "INFO":
-            color = cls.BLUE
-            symbol = "ℹ"
-        elif level == "SUCCESS":
-            color = cls.GREEN
-            symbol = "✓"
-        elif level == "WARNING":
-            color = cls.YELLOW
-            symbol = "⚠"
-        elif level == "ERROR":
-            color = cls.RED
-            symbol = "✗"
-        elif level == "FATAL":
-            color = cls.RED
-            symbol = "☠"
-        elif level == "DEBUG":
-            color = cls.GRAY
-            symbol = "•"
-        elif level == "STATUS":
-            color = cls.CYAN
-            symbol = "→"
-
-        # Print the formatted message
-        print(f"{color}{symbol} {message}{cls.RESET}")
-
-        # Store for summary
-        if level == "WARNING":
-            cls.warnings.append(message)
-        elif level in ["ERROR", "FATAL"]:
-            cls.errors.append(message)
-        elif level == "SUCCESS":
-            cls.successes.append(message)
-        elif level == "INFO":
-            cls.info.append(message)
-    
+            
+        color_map = {
+            "INFO": cls.BLUE,
+            "SUCCESS": cls.GREEN,
+            "WARNING": cls.YELLOW,
+            "ERROR": cls.RED,
+            "DEBUG": cls.GRAY,
+            "FATAL": cls.RED, # Fatal errors use red
+            "STATUS": cls.CYAN # Status messages
+        }
+        
+        level_upper = level.upper()
+        symbol = cls.SYMBOLS.get(level_upper, "")
+        color = color_map.get(level_upper, cls.RESET) if cls._use_color else ""
+        reset = cls.RESET if cls._use_color else ""
+        bold = cls.BOLD if level_upper in ["ERROR", "FATAL"] else ""
+        
+        timestamp = datetime.now().strftime("%H:%M:%S") + " " if cls._show_timestamp else ""
+        
+        # Record messages for summary (excluding DEBUG)
+        if level_upper == "WARNING": cls.warnings.append(message)
+        elif level_upper == "ERROR": cls.errors.append(message)
+        elif level_upper == "SUCCESS": cls.successes.append(message)
+        elif level_upper == "INFO": cls.info.append(message)
+            
+        output = f"{timestamp}{bold}{color}{symbol} {message}{reset}\n"
+        sys.stdout.write(output)
+        sys.stdout.flush()
+        
+        if level_upper == "FATAL":
+            cls.fancy_summary("Fatal Error", message, is_error=True)
+            sys.exit(1)
+            
     @classmethod
     def status(cls, message):
-        """Log a status update message - replacement for animations"""
-        # Only show status messages if verbose or if they're important
-        if Config.Output.VERBOSE or any(keyword in message.lower() for keyword in 
-                                      ["error", "failed", "success", "complete", "done"]):
-            cls.log(message, "STATUS")
-    
+        """Log a status message."""
+        cls.log(message, level="STATUS")
+        
     @classmethod
     def create_final_summary(cls, people_count, total_courts, output_path=None, 
                              processing_time=None, # This is total time, handled by fancy_summary
@@ -429,521 +398,263 @@ class OutputManager:
                              duration_court_detection=0.0,
                              duration_people_detection=0.0,
                              duration_position_analysis=0.0):
-        """Create a concise and readable final summary, including detailed occupancy and performance."""
+        """Create a formatted summary of the detection results."""
+        if cls._super_quiet:
+            return
+            
         summary_lines = []
-
-        if not cls.errors:
-            # Overall detection counts
-            people_str = "No people detected" if people_count == 0 else f"{people_count} person{'s' if people_count != 1 else ''} detected"
-            court_str = "no courts found" if total_courts == 0 else f"{total_courts} court{'s' if total_courts != 1 else ''} found"
-            summary_lines.append(f"Results: {people_str}, {court_str}.")
-
-            # Detailed court occupancy
-            if detailed_court_counts and any(counts['in_bounds'] > 0 or counts['out_bounds'] > 0 for counts in detailed_court_counts.values()):
-                summary_lines.append("") # Blank line for separation
-                summary_lines.append("Court Occupancy:")
-                for court_num, counts in sorted(detailed_court_counts.items()):
-                    parts = []
-                    if counts.get('in_bounds', 0) > 0:
-                        parts.append(f"{counts['in_bounds']} on court")
-                    if counts.get('out_bounds', 0) > 0:
-                        parts.append(f"{counts['out_bounds']} on sideline")
-                    if parts: # Only add line if there are people for this court with details
-                        summary_lines.append(f"  Court {court_num}: {', '.join(parts)}.")
-            elif people_count > 0 and total_courts > 0:
-                summary_lines.append("No people were located on specific court areas (in-bounds/sidelines).")
-
-        else: # cls.errors is True
-            summary_lines.append("Processing failed due to errors.")
-
-        # Add output path if generated and no errors
-        if output_path and not cls.errors:
-            summary_lines.append("")
-            summary_lines.append(f"Output saved: {os.path.basename(output_path)}")
-
-        # Performance Analytics
-        if not cls.errors and (duration_court_detection > 0.01 or duration_people_detection > 0.01 or duration_position_analysis > 0.01):
-            summary_lines.append("") 
-            summary_lines.append("Performance:")
-            if duration_court_detection > 0.01:
-                summary_lines.append(f"  Court Finding: {duration_court_detection:.2f}s")
-            if duration_people_detection > 0.01:
-                summary_lines.append(f"  People Detection: {duration_people_detection:.2f}s")
-            if duration_position_analysis > 0.01:
-                summary_lines.append(f"  Position Analysis: {duration_position_analysis:.2f}s")
-
-        # Error and Warning Sections (remain largely the same)
+        summary_lines.append(f"{cls.BOLD}Detection Summary{cls.RESET}")
+        summary_lines.append("-" * 30)
+        summary_lines.append(f"Total Courts Detected: {cls.BOLD}{total_courts}{cls.RESET}")
+        summary_lines.append(f"Total People Detected: {cls.BOLD}{people_count}{cls.RESET}")
+        
+        if detailed_court_counts:
+            summary_lines.append("\nPeople per Court:")
+            total_in_bounds = 0
+            total_out_bounds = 0
+            for court_num, counts in sorted(detailed_court_counts.items()):
+                in_bounds = counts.get('in_bounds', 0)
+                out_bounds = counts.get('out_bounds', 0)
+                summary_lines.append(f"  Court {court_num}: {cls.GREEN}{in_bounds} in bounds{cls.RESET}, {cls.YELLOW}{out_bounds} nearby{cls.RESET}")
+                total_in_bounds += in_bounds
+                total_out_bounds += out_bounds
+            summary_lines.append(f"  Total on Courts: {cls.GREEN}{total_in_bounds}{cls.RESET}")
+            summary_lines.append(f"  Total Near Courts: {cls.YELLOW}{total_out_bounds}{cls.RESET}")
+        
+        # Timing information
+        summary_lines.append("\nPerformance:")
+        if duration_court_detection > 0:
+            summary_lines.append(f"  Court Detection: {duration_court_detection:.2f}s")
+        if duration_people_detection > 0:
+            summary_lines.append(f"  People Detection: {duration_people_detection:.2f}s")
+        if duration_position_analysis > 0:
+            summary_lines.append(f"  Position Analysis: {duration_position_analysis:.2f}s")
+        
+        # Total time handled by fancy_summary
+        
+        if output_path:
+            summary_lines.append(f"\nOutput Image: {cls.UNDERLINE}{output_path}{cls.RESET}")
+            
+        # Display warnings and errors
+        if cls.warnings:
+            summary_lines.append(f"\n{cls.YELLOW}Warnings:{cls.RESET}")
+            for warning in cls.warnings:
+                summary_lines.append(f"  - {warning}")
         if cls.errors:
-            summary_lines.append("") 
-            summary_lines.append("Errors:")
-            for i, error in enumerate(cls.errors, 1):
-                error_short = str(error).split('\n')[0]
-                error_short = error_short[:70] + ('...' if len(error_short) > 70 else '')
-                summary_lines.append(f"  {i}. {error_short}") 
-            if any("not found" in str(e).lower() for e in cls.errors):
-                summary_lines.append("\nTry: Check file paths and permissions")
-            elif any(("camera" in str(e).lower() or "picamera" in str(e).lower()) for e in cls.errors):
-                summary_lines.append("\nTry: Check camera connection or use --no-camera flag")
-        elif cls.warnings:
-            summary_lines.append("") 
-            summary_lines.append("Warnings:")
-            for i, warning in enumerate(cls.warnings, 1):
-                summary_lines.append(f"  {i}. {warning}")
+            summary_lines.append(f"\n{cls.RED}Errors:{cls.RESET}")
+            for error in cls.errors:
+                summary_lines.append(f"  - {error}")
+                
+        # Use fancy_summary to print it
+        cls.fancy_summary("Detection Results", "\n".join(summary_lines), processing_time=processing_time)
 
-        return "\n".join(summary_lines)
-    
     @classmethod
     def _ensure_animation_stopped(cls):
-        """Ensure any running animation is stopped and cleaned up"""
+        """Make sure any running animation is stopped and cleaned up."""
         if cls._animation_active:
             cls._stop_animation = True
+            if cls._animation_thread:
+                cls._animation_thread.join() # Wait for thread to finish
             cls._animation_active = False
-            if cls._animation_thread and cls._animation_thread.is_alive():
-                cls._animation_thread.join(timeout=0.1)
-            
-            # Clear the current line
-            sys.stdout.write("\r\033[K")
+            cls._animation_thread = None
+            sys.stdout.write("\r" + " " * 80 + "\r") # Clear the animation line
             sys.stdout.flush()
-    
+            
     @classmethod
     def _run_animation_thread(cls, animate_func):
-        """Run an animation thread with the given animation function"""
-        # Ensure any previous animation is stopped
-        cls._ensure_animation_stopped()
-        
-        # Set up new animation
-        cls._stop_animation = False
-        cls._animation_active = True
-        
-        # Start the animation thread
-        cls._animation_thread = threading.Thread(target=animate_func)
-        cls._animation_thread.daemon = True
-        cls._animation_thread.start()
-    
+        """Internal method to run the animation loop in a thread."""
+        try:
+            animate_func()
+        except Exception as e:
+            # If animation thread crashes, log it but don't kill main process
+            print(f"\n[Animation Error] {e}\n")
+        finally:
+            cls._animation_active = False # Ensure flag is reset
+            # Don't clear line here, stop_animation handles it
+            
     @classmethod
     def animate(cls, message, is_progress=False, total=20):
-        """
-        Display a simple spinning animation next to text
+        """Start a terminal animation or progress bar."""
+        cls._ensure_animation_stopped() # Stop previous animation if any
         
-        Args:
-            message: Message to display with the animation
-            is_progress: Whether this is a progress animation
-            total: Total steps for progress animation
-        """
+        cls._stop_animation = False
+        cls._animation_active = True
+        cls._progress_total = total
+        cls._progress_current = 0
+        
         if is_progress:
-            # Progress bar animation
-            cls._progress_total = total
-            cls._progress_current = 0
-            
+            # --- Progress Bar Animation --- 
             def animate():
-                while not cls._stop_animation and cls._animation_active:
-                    # Calculate progress percentage
-                    progress = min(100, int((cls._progress_current / cls._progress_total) * 100))
-                    
-                    # Create progress bar
-                    bar_width = 20
-                    filled = int(bar_width * progress / 100)
-                    bar = "█" * filled + "░" * (bar_width - filled)
-                    
-                    # Format timestamp
-                    timestamp = ""
-                    if Config.Output.SHOW_TIMESTAMP:
-                        timestamp = f"{cls.GRAY}[{datetime.now().strftime('%H:%M:%S')}]{cls.RESET} "
-                    
-                    # Clear line and print progress
-                    sys.stdout.write(f"\r\033[K{timestamp}{message} {cls.BOLD}{cls.CYAN}[{bar}] {progress}%{cls.RESET}")
+                bar_length = 20 # Length of the progress bar
+                while not cls._stop_animation:
+                    percent = int(100 * (cls._progress_current / float(cls._progress_total)))
+                    filled_length = int(bar_length * cls._progress_current // cls._progress_total)
+                    bar = '█' * filled_length + '-' * (bar_length - filled_length)
+                    # Use \r to return cursor to start of line
+                    output = f'\r{cls.CYAN}{cls.SYMBOLS["STATUS"]} {message} [{bar}] {percent}%{cls.RESET}'
+                    sys.stdout.write(output)
                     sys.stdout.flush()
-                    
                     time.sleep(0.1)
+                    if cls._progress_current >= cls._progress_total:
+                        break # Exit if progress complete
+                # Final update to show 100% if needed
+                percent = 100
+                bar = '█' * bar_length
+                output = f'\r{cls.CYAN}{cls.SYMBOLS["STATUS"]} {message} [{bar}] {percent}%{cls.RESET}'
+                sys.stdout.write(output)
+                sys.stdout.flush()
         else:
-            # Classic spinning animation
-            frames = ["|", "/", "-", "\\"]
-            
+            # --- Spinner Animation --- 
             def animate():
-                idx = 0
-                while not cls._stop_animation and cls._animation_active:
-                    frame = frames[idx % len(frames)]
-                    
-                    # Format timestamp
-                    timestamp = ""
-                    if Config.Output.SHOW_TIMESTAMP:
-                        timestamp = f"{cls.GRAY}[{datetime.now().strftime('%H:%M:%S')}]{cls.RESET} "
-                    
-                    # Clear line and print spinner
-                    sys.stdout.write(f"\r\033[K{timestamp}{message} {cls.BOLD}{cls.CYAN}{frame}{cls.RESET}")
+                spin_chars = ['-', '\\', '|', '/']
+                i = 0
+                while not cls._stop_animation:
+                    # Use \r to return cursor to start of line
+                    output = f'\r{cls.CYAN}{cls.SYMBOLS["STATUS"]} {message} {spin_chars[i % len(spin_chars)]}{cls.RESET}'
+                    sys.stdout.write(output)
                     sys.stdout.flush()
+                    i += 1
+                    time.sleep(0.1)
                     
-                    idx = (idx + 1) % len(frames)
-                    time.sleep(0.08)
+        cls._animation_thread = threading.Thread(target=cls._run_animation_thread, args=(animate,), daemon=True)
+        cls._animation_thread.start()
         
-        # Run the animation in a separate thread
-        cls._run_animation_thread(animate)
-    
     @classmethod
     def set_progress(cls, value):
-        """Set the current progress value (0.0 to 1.0)"""
-        cls._progress_current = min(cls._progress_total, max(0, int(value * cls._progress_total)))
-    
+        """Update the progress value for the progress bar animation."""
+        if cls._animation_active:
+            cls._progress_current = min(value, cls._progress_total) # Cap at total
+        
     @classmethod
     def stop_animation(cls, success=True):
-        """Stop the current animation with optional completion indicator"""
-        if cls._animation_active:
-            # First stop the animation thread
-            cls._stop_animation = True
-            cls._animation_active = False
-            if cls._animation_thread and cls._animation_thread.is_alive():
-                cls._animation_thread.join(timeout=0.1)
+        """Stop the current animation and optionally print a final status."""
+        if not cls._animation_active:
+            return
             
-            # Clear the line
-            sys.stdout.write("\r\033[K")
-            sys.stdout.flush()
-            
-            # No completion message - the calling code will do this
-    
+        cls._ensure_animation_stopped() # Join thread and clear line
+        
+        # Optionally print final status (e.g., Success ✓ or Failure ✗)
+        # This depends on how you want the flow - often the next log message handles this
+        # For example, after animate('Downloading'), you might log('Download complete', 'SUCCESS')
+        
     @classmethod
     def summarize_detections(cls, courts, people, people_locations):
-        """Summarize detection results and count people per court (no logging)."""
-        if Config.Output.SUPER_QUIET:
-            return {}
-            
-        # Only count people per court for the final summary, don't log here
-        court_counts = {}
-        for court_idx, area_type in people_locations:
-            if court_idx >= 0:
-                court_num = court_idx + 1
-                if court_num not in court_counts:
-                    court_counts[court_num] = 0
-                court_counts[court_num] += 1
+        """Generate a simple summary string of detections."""
+        court_count = len(courts)
+        people_count = len(people)
+        in_bounds_count = len([loc for loc in people_locations if loc['location'] == 'In Bounds'])
+        out_bounds_count = len([loc for loc in people_locations if loc['location'] == 'Out of Bounds'])
+        off_court_count = people_count - (in_bounds_count + out_bounds_count)
         
-        return court_counts
-    
+        summary = f"Courts: {court_count}, People: {people_count} (In: {in_bounds_count}, Near: {out_bounds_count}, Off: {off_court_count})"
+        return summary
+
     @classmethod
     def fancy_summary(cls, title, content, processing_time=None, is_error=False):
-        """Display a clean, professional summary box with optional error highlighting."""
-        # Process content into lines
-        content_lines = content.split('\n') if isinstance(content, str) else content
+        """
+        Prints a visually distinct summary box in the terminal.
+        Handles multiline content.
+        """
+        cls._ensure_animation_stopped()
+        if cls._super_quiet:
+            return
         
-        # Add processing time if provided
+        lines = content.split('\n')
+        max_len = len(title) + 4 # Initial length based on title
+        for line in lines:
+            # Strip ANSI codes for length calculation
+            clean_line = re.sub(r'\x1b\[[0-9;]*[mK]', '', line)
+            max_len = max(max_len, len(clean_line))
+            
+        border_color = cls.RED if is_error else cls.GREEN
+        reset = cls.RESET
+        bold = cls.BOLD
+        
+        # Top border
+        print(f"{border_color}╔═{bold}{title.center(max_len)}{reset}{border_color}═╗{reset}")
+        
+        # Content lines
+        for line in lines:
+            clean_line = re.sub(r'\x1b\[[0-9;]*[mK]', '', line)
+            padding = max_len - len(clean_line)
+            print(f"{border_color}║ {reset}{line}{' ' * padding} {border_color}║{reset}")
+            
+        # Processing time if provided
         if processing_time is not None:
-            time_str = f"{processing_time:.1f}s" if processing_time < 60 else f"{int(processing_time/60)}m {int(processing_time%60)}s"
-            content_lines.append("")
-            content_lines.append(f"Processing time: {time_str}")
+            time_str = f"Total Time: {processing_time:.2f}s"
+            padding = max_len - len(time_str)
+            print(f"{border_color}╠{'═' * (max_len + 2)}╣{reset}")
+            print(f"{border_color}║ {cls.GRAY}{time_str}{' ' * padding} {reset}{border_color}║{reset}")
         
-        # Determine box width
-        max_width = max(len(line) for line in content_lines) if content_lines else 0
-        box_width = max(max_width + 4, len(title) + 6, 50)
-        
-        # Try to detect terminal width
-        try:
-            import shutil
-            terminal_width = shutil.get_terminal_size().columns
-            box_width = min(box_width, terminal_width - 2)
-        except:
-            pass
-        
-        # Choose box characters
-        try:
-            if sys.stdout.encoding is not None:
-                "│".encode(sys.stdout.encoding)
-                use_unicode = True
-            else:
-                use_unicode = False
-        except:
-            use_unicode = False
-            
-        if use_unicode:
-            top_left, top_right = "╭", "╮"
-            bottom_left, bottom_right = "╰", "╯"
-            horizontal, vertical = "─", "│"
-            t_right, t_left = "├", "┤"
-        else:
-            top_left, top_right = "+", "+"
-            bottom_left, bottom_right = "+", "+"
-            horizontal, vertical = "-", "|"
-            t_right, t_left = "+", "+"
-            
-        # Determine title color
-        title_color = cls.RED if is_error else cls.GREEN
-        reset_color = cls.RESET
-        
-        # Build the box
-        top_border = f"{top_left}{horizontal * (box_width - 2)}{top_right}"
-        title_line = f"{vertical} {title_color}{cls.BOLD}{title.center(box_width - 4)}{reset_color} {vertical}"
-        divider = f"{t_right}{horizontal * (box_width - 2)}{t_left}"
-        bottom_border = f"{bottom_left}{horizontal * (box_width - 2)}{bottom_right}"
-        
-        # Display the box
-        print(top_border)
-        print(title_line)
-        print(divider)
-        
-        for line in content_lines:
-            # Calculate padding
-            padding = box_width - 4 - len(line)
-            if padding >= 0:
-                print(f"{vertical} {line}{' ' * padding} {vertical}")
-            else:
-                # Line is too long, truncate
-                print(f"{vertical} {line[:box_width - 7]}... {vertical}")
-        
-        print(bottom_border)
+        # Bottom border
+        print(f"{border_color}╚{'═' * (max_len + 2)}╝{reset}")
+        print() # Add a blank line after the summary
+
+    # --- Potential Fixes --- 
+    # Store potential issues and fixes
+    potential_issues = {}
     
     @classmethod
-    def get_potential_fixes(cls):
-        """Generate detailed solutions for common errors with specific commands to run"""
-        messages = []
-        
-        if not cls.errors:
-            return ""
-        
-        # Quick commands for common problems
-        for error in cls.errors:
-            # YOLOv8 specific errors
-            if "'list' object has no attribute 'pandas'" in error or "'boxes'" in error or "YOLOv8 result format error" in error:
-                messages.append("YOLOv8 compatibility error\nYou're using a YOLOv8 model but the script encountered format issues. Try:\n1. Run with a YOLOv5 model: python main.py --model yolov5s\n2. Or install ultralytics package: pip install ultralytics")
-            
-            # Module not found errors
-            elif "ModuleNotFoundError" in error or "No module named" in error:
-                module_name = error.split("'")[1] if "'" in error else "unknown"
-                if module_name == "cv2":
-                    messages.append(f"Missing OpenCV: {module_name}\nRun: pip install opencv-python")
-                elif module_name == "torch":
-                    messages.append(f"Missing PyTorch: {module_name}\nRun: pip install torch torchvision")
-                elif module_name == "numpy":
-                    messages.append(f"Missing NumPy: {module_name}\nRun: pip install numpy")
-                elif module_name == "shapely":
-                    messages.append(f"Missing Shapely: {module_name}\nRun: pip install shapely")
-                elif module_name == "ultralytics" and "yolov8" in error.lower():
-                    messages.append(f"Missing Ultralytics package needed for YOLOv8\nRun: pip install ultralytics\nOr use YOLOv5 model: python main.py --model yolov5s")
-                else:
-                    messages.append(f"Missing module: {module_name}\nRun: pip install {module_name}\nOr: pip install -r requirements.txt")
-                
-            # Torch/CUDA errors
-            elif "CUDA" in error or "cuda" in error:
-                if "out of memory" in error.lower():
-                    messages.append("CUDA out of memory error\nTry: Reduce batch size or image size\nOr: Use --device cpu flag to use CPU instead")
-                elif "not available" in error.lower():
-                    messages.append("CUDA not available\nRun: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118\nOr: Use CPU with --device cpu")
-                else:
-                    messages.append("CUDA error detected\nRun: pip install -r requirements.txt\nOr: Use CPU with --device cpu")
-                
-            # OpenCV errors
-            elif "cv2" in error or "OpenCV" in error:
-                if "cannot read frame" in error.lower() or "empty frame" in error.lower():
-                    messages.append("OpenCV cannot read the image\nCheck that your image is valid and not corrupted")
-                else:
-                    messages.append("OpenCV error detected\nRun: pip install opencv-python")
-                
-            # YOLOv5/YOLOv8 model errors
-            elif "model" in error.lower() and ("yolo" in error.lower() or "not found" in error.lower()):
-                if "models directory" in error.lower():
-                    messages.append(f"Models directory not found\nRun: mkdir -p models")
-                # Check for any YOLOv8 to YOLOv19 models (future versions)
-                elif any(f"yolov{v}" in error.lower() for v in range(8, 20)):
-                    version_match = re.search(r'yolov(\d+)', error.lower())
-                    version = version_match.group(1) if version_match else "newer"
-                    messages.append(f"YOLOv{version} model error\n1. Try YOLOv5 instead: python main.py --model yolov5s\n2. For YOLOv{version}: pip install ultralytics\n3. Or download manually: mkdir -p models && wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov{version}n.pt -O models/yolov{version}n.pt")
-                else:
-                    messages.append(f"YOLO model not found\nRun: mkdir -p models && wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O models/yolov5s.pt")
-            
-            # macOS SSL Certificate errors
-            elif "ssl" in error.lower() and "certificate" in error.lower() and ("darwin" in error.lower() or "macos" in error.lower()):
-                messages.append("macOS SSL Certificate verification issue\nRunning one of these commands should fix it:\n1. Run with: python main.py --disable-ssl-verify\n2. Run with: python main.py --force-macos-cert-install\n3. Or manually install certificates by running /Applications/Python 3.x/Install Certificates.command")
-                
-            # Permission errors
-            elif any(word in error.lower() for word in ["permission", "access", "denied"]):
-                if sys.platform == "win32":
-                    messages.append("Permission denied\nRun the script as Administrator or check file permissions\nRight-click Command Prompt/PowerShell and select 'Run as Administrator'")
-                else:
-                    messages.append("Permission denied\nRun: chmod +x main.py && sudo ./main.py")
-                
-            # Shapely errors
-            elif "shapely" in error.lower():
-                messages.append("Shapely error detected\nRun: pip install shapely")
-                
-            # Image errors
-            elif any(word in error.lower() for word in ["unable to open", "load image", "read image", "no such file"]):
-                messages.append(f"Image not found at {Config.Paths.input_path()}\nEnsure the image exists:\n  - Run: mkdir -p images && cp your_image.jpg images/input.png\n  - Or use: python main.py --input /path/to/your/image.jpg")
-                
-            # Directory errors
-            elif any(word in error.lower() for word in ["no such file or directory", "directory", "folder", "path"]):
-                if "images" in error.lower():
-                    messages.append("Images directory not found\nRun: mkdir -p images && cp your_image.jpg images/input.png")
-                elif "models" in error.lower():
-                    messages.append("Models directory not found\nRun: mkdir -p models && wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O models/yolov5s.pt")
-                else:
-                    dir_name = error.split("'")[1] if "'" in error else "directory"
-                    messages.append(f"Directory error: {dir_name}\nCheck that all required directories exist\nRun: mkdir -p images models")
-            
-            # Internet connection errors during YOLOv5 download
-            elif any(word in error.lower() for word in ["connection", "timeout", "network", "internet", "download"]):
-                messages.append("Network error detected\nCheck your internet connection and try again\nIf downloading YOLO model fails, manually download from: https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt\nThen place it in the models/ directory")
-            
-            # Memory errors
-            elif "memory" in error.lower():
-                messages.append("Memory error detected\nTry with a smaller image or on a machine with more RAM")
-                
-            # SSL errors
-            elif "ssl" in error.lower():
-                if sys.platform == "darwin":  # macOS
-                    messages.append("SSL error detected on macOS\nTry: python main.py --force-macos-cert-install\nOr: python main.py --disable-ssl-verify")
-                else:
-                    messages.append("SSL error detected when downloading model\nTry: pip install certifi --upgrade\nOr: Run with --disable-ssl-verify flag")
-                
-            # Disk space errors
-            elif any(word in error.lower() for word in ["disk", "space", "storage", "write"]):
-                messages.append("Disk space or write error\nCheck that you have sufficient disk space and write permissions in the current directory")
-               
-            # For any other errors, give a more detailed message
-            else:
-                messages.append(f"Error: {error}\n\nGeneral troubleshooting:\n1. Ensure all dependencies are installed: pip install -r requirements.txt\n2. Check for proper YOLO model: models/yolov5s.pt\n3. Verify input image exists and is readable\n4. Try running with --debug flag for more information")
-        
-        # Create a direct message with commands
-        if len(messages) == 1:
-            return messages[0]
-        else:
-            return "Multiple issues detected:\n\n" + "\n\n".join(f"ISSUE {i+1}:\n{msg}" for i, msg in enumerate(messages))
-        
-        return "\n".join(messages)
-    
+    def add_potential_issue(cls, issue_key, description, fix_suggestion):
+        """Add a potential issue detected during runtime."""
+        if issue_key not in cls.potential_issues:
+            cls.potential_issues[issue_key] = {"description": description, "fix": fix_suggestion}
+
     @classmethod
     def get_potential_fixes(cls):
-        """Generate detailed solutions for common errors with specific commands to run"""
-        messages = []
-        
-        if not cls.errors:
+        """Format potential issues and fixes for display."""
+        if not cls.potential_issues:
             return ""
+            
+        output = [f"{cls.YELLOW}{cls.BOLD}Potential Issues & Fixes:{cls.RESET}"]
+        for key, data in cls.potential_issues.items():
+            output.append(f"- {cls.YELLOW}Issue:{cls.RESET} {data['description']}")
+            output.append(f"  {cls.GREEN}Suggestion:{cls.RESET} {data['fix']}")
+            
+        return "\n".join(output)
         
-        # Quick commands for common problems
-        for error in cls.errors:
-            # YOLOv8 specific errors
-            if "'list' object has no attribute 'pandas'" in error or "'boxes'" in error or "YOLOv8 result format error" in error:
-                messages.append("YOLOv8 compatibility error\nYou're using a YOLOv8 model but the script encountered format issues. Try:\n1. Run with a YOLOv5 model: python main.py --model yolov5s\n2. Or install ultralytics package: pip install ultralytics")
-            
-            # Module not found errors
-            elif "ModuleNotFoundError" in error or "No module named" in error:
-                module_name = error.split("'")[1] if "'" in error else "unknown"
-                if module_name == "cv2":
-                    messages.append(f"Missing OpenCV: {module_name}\nRun: pip install opencv-python")
-                elif module_name == "torch":
-                    messages.append(f"Missing PyTorch: {module_name}\nRun: pip install torch torchvision")
-                elif module_name == "numpy":
-                    messages.append(f"Missing NumPy: {module_name}\nRun: pip install numpy")
-                elif module_name == "shapely":
-                    messages.append(f"Missing Shapely: {module_name}\nRun: pip install shapely")
-                elif module_name == "ultralytics" and "yolov8" in error.lower():
-                    messages.append(f"Missing Ultralytics package needed for YOLOv8\nRun: pip install ultralytics\nOr use YOLOv5 model: python main.py --model yolov5s")
-                else:
-                    messages.append(f"Missing module: {module_name}\nRun: pip install {module_name}\nOr: pip install -r requirements.txt")
-                
-            # Torch/CUDA errors
-            elif "CUDA" in error or "cuda" in error:
-                if "out of memory" in error.lower():
-                    messages.append("CUDA out of memory error\nTry: Reduce batch size or image size\nOr: Use --device cpu flag to use CPU instead")
-                elif "not available" in error.lower():
-                    messages.append("CUDA not available\nRun: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118\nOr: Use CPU with --device cpu")
-                else:
-                    messages.append("CUDA error detected\nRun: pip install -r requirements.txt\nOr: Use CPU with --device cpu")
-                
-            # OpenCV errors
-            elif "cv2" in error or "OpenCV" in error:
-                if "cannot read frame" in error.lower() or "empty frame" in error.lower():
-                    messages.append("OpenCV cannot read the image\nCheck that your image is valid and not corrupted")
-                else:
-                    messages.append("OpenCV error detected\nRun: pip install opencv-python")
-                
-            # YOLOv5/YOLOv8 model errors
-            elif "model" in error.lower() and ("yolo" in error.lower() or "not found" in error.lower()):
-                if "models directory" in error.lower():
-                    messages.append(f"Models directory not found\nRun: mkdir -p models")
-                # Check for any YOLOv8 to YOLOv19 models (future versions)
-                elif any(f"yolov{v}" in error.lower() for v in range(8, 20)):
-                    version_match = re.search(r'yolov(\d+)', error.lower())
-                    version = version_match.group(1) if version_match else "newer"
-                    messages.append(f"YOLOv{version} model error\n1. Try YOLOv5 instead: python main.py --model yolov5s\n2. For YOLOv{version}: pip install ultralytics\n3. Or download manually: mkdir -p models && wget https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov{version}n.pt -O models/yolov{version}n.pt")
-                else:
-                    messages.append(f"YOLO model not found\nRun: mkdir -p models && wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O models/yolov5s.pt")
-            
-            # macOS SSL Certificate errors
-            elif "ssl" in error.lower() and "certificate" in error.lower() and ("darwin" in error.lower() or "macos" in error.lower()):
-                messages.append("macOS SSL Certificate verification issue\nRunning one of these commands should fix it:\n1. Run with: python main.py --disable-ssl-verify\n2. Run with: python main.py --force-macos-cert-install\n3. Or manually install certificates by running /Applications/Python 3.x/Install Certificates.command")
-                
-            # Permission errors
-            elif any(word in error.lower() for word in ["permission", "access", "denied"]):
-                if sys.platform == "win32":
-                    messages.append("Permission denied\nRun the script as Administrator or check file permissions\nRight-click Command Prompt/PowerShell and select 'Run as Administrator'")
-                else:
-                    messages.append("Permission denied\nRun: chmod +x main.py && sudo ./main.py")
-                
-            # Shapely errors
-            elif "shapely" in error.lower():
-                messages.append("Shapely error detected\nRun: pip install shapely")
-                
-            # Image errors
-            elif any(word in error.lower() for word in ["unable to open", "load image", "read image", "no such file"]):
-                messages.append(f"Image not found at {Config.Paths.input_path()}\nEnsure the image exists:\n  - Run: mkdir -p images && cp your_image.jpg images/input.png\n  - Or use: python main.py --input /path/to/your/image.jpg")
-                
-            # Directory errors
-            elif any(word in error.lower() for word in ["no such file or directory", "directory", "folder", "path"]):
-                if "images" in error.lower():
-                    messages.append("Images directory not found\nRun: mkdir -p images && cp your_image.jpg images/input.png")
-                elif "models" in error.lower():
-                    messages.append("Models directory not found\nRun: mkdir -p models && wget -q https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt -O models/yolov5s.pt")
-                else:
-                    dir_name = error.split("'")[1] if "'" in error else "directory"
-                    messages.append(f"Directory error: {dir_name}\nCheck that all required directories exist\nRun: mkdir -p images models")
-            
-            # Internet connection errors during YOLOv5 download
-            elif any(word in error.lower() for word in ["connection", "timeout", "network", "internet", "download"]):
-                messages.append("Network error detected\nCheck your internet connection and try again\nIf downloading YOLO model fails, manually download from: https://github.com/ultralytics/yolov5/releases/download/v6.0/yolov5s.pt\nThen place it in the models/ directory")
-            
-            # Memory errors
-            elif "memory" in error.lower():
-                messages.append("Memory error detected\nTry with a smaller image or on a machine with more RAM")
-                
-            # SSL errors
-            elif "ssl" in error.lower():
-                if sys.platform == "darwin":  # macOS
-                    messages.append("SSL error detected on macOS\nTry: python main.py --force-macos-cert-install\nOr: python main.py --disable-ssl-verify")
-                else:
-                    messages.append("SSL error detected when downloading model\nTry: pip install certifi --upgrade\nOr: Run with --disable-ssl-verify flag")
-                
-            # Disk space errors
-            elif any(word in error.lower() for word in ["disk", "space", "storage", "write"]):
-                messages.append("Disk space or write error\nCheck that you have sufficient disk space and write permissions in the current directory")
-               
-            # For any other errors, give a more detailed message
-            else:
-                messages.append(f"Error: {error}\n\nGeneral troubleshooting:\n1. Ensure all dependencies are installed: pip install -r requirements.txt\n2. Check for proper YOLO model: models/yolov5s.pt\n3. Verify input image exists and is readable\n4. Try running with --debug flag for more information")
-        
-        # Create a direct message with commands
-        if len(messages) == 1:
-            return messages[0]
-        else:
-            return "Multiple issues detected:\n\n" + "\n\n".join(f"ISSUE {i+1}:\n{msg}" for i, msg in enumerate(messages))
-        
-        return "\n".join(messages)
-@contextlib.contextmanager
-def suppress_stdout_stderr():
-    """Context manager to suppress stdout and stderr output"""
-    # Save the original stdout and stderr
-    old_stdout = sys.stdout
-    old_stderr = sys.stderr
-    
-    # Create string buffers to capture output
-    stdout_buffer = io.StringIO()
-    stderr_buffer = io.StringIO()
-    
-    # Redirect output to the buffers
-    sys.stdout = stdout_buffer
-    sys.stderr = stderr_buffer
-    
+# === Load Configuration from JSON if it exists ===
+CONFIG_FILE = "config.json"
+if os.path.exists(CONFIG_FILE):
     try:
-        yield  # Code inside the with block runs with redirected stdout/stderr
-    finally:
-        # Restore the original stdout and stderr
-        sys.stdout = old_stdout
-        sys.stderr = old_stderr
+        with open(CONFIG_FILE, 'r') as f:
+            _loaded_config = json.load(f)
+            # Update Config class attributes directly (or use a dedicated function)
+            # Camera Settings
+            if 'Camera' in _loaded_config:
+                Config.Camera.WIDTH = _loaded_config['Camera'].get('width', Config.Camera.WIDTH)
+                Config.Camera.HEIGHT = _loaded_config['Camera'].get('height', Config.Camera.HEIGHT)
+            # Model Settings
+            if 'Model' in _loaded_config:
+                Config.Model.NAME = _loaded_config['Model'].get('NAME', Config.Model.NAME)
+                Config.Model.CONFIDENCE = _loaded_config['Model'].get('CONFIDENCE', Config.Model.CONFIDENCE)
+                Config.Model.IOU = _loaded_config['Model'].get('IOU', Config.Model.IOU)
+                Config.Model.CLASSES = _loaded_config['Model'].get('CLASSES', Config.Model.CLASSES)
+            # Output Settings
+            if 'Output' in _loaded_config:
+                Config.Output.VERBOSE = _loaded_config['Output'].get('VERBOSE', Config.Output.VERBOSE)
+                Config.Output.SUPER_QUIET = _loaded_config['Output'].get('SUPER_QUIET', Config.Output.SUPER_QUIET)
+                Config.Output.SUMMARY_ONLY = _loaded_config['Output'].get('SUMMARY_ONLY', Config.Output.SUMMARY_ONLY)
+                Config.Output.EXTRA_VERBOSE = _loaded_config['Output'].get('EXTRA_VERBOSE', Config.Output.EXTRA_VERBOSE)
+            # Debug Mode
+            Config.DEBUG_MODE = _loaded_config.get('DEBUG_MODE', Config.DEBUG_MODE)
+            # Multiprocessing Settings
+            if 'MultiProcessing' in _loaded_config:
+                Config.MultiProcessing.ENABLED = _loaded_config['MultiProcessing'].get('ENABLED', Config.MultiProcessing.ENABLED)
+                Config.MultiProcessing.NUM_PROCESSES = _loaded_config['MultiProcessing'].get('NUM_PROCESSES', Config.MultiProcessing.NUM_PROCESSES)
+
+            # Configure OutputManager AFTER loading config
+            OutputManager.configure(_loaded_config)
+            OutputManager.log(f"Loaded configuration from {CONFIG_FILE}", "DEBUG")
+            
+    except json.JSONDecodeError as e:
+        OutputManager.log(f"Error decoding {CONFIG_FILE}: {e}. Using default class values.", "WARNING")
+    except Exception as e:
+        OutputManager.log(f"Could not apply {CONFIG_FILE}: {e}. Using default class values.", "WARNING")
+else:
+    OutputManager.log(f"{CONFIG_FILE} not found. Using default class values.", "DEBUG")
+# === End Load Configuration ===
+
 def create_blue_mask(image):
     """Create a mask for blue areas in the image"""
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)

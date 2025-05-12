@@ -110,7 +110,8 @@ if ! command_exists python3; then
 fi
 
 PY=python3
-PY_VERSION=$($PY --version)
+# Filter potential null bytes from version string
+PY_VERSION=$($PY --version | tr -d '\0')
 printf "Found %s\n" "$PY_VERSION"
 
 # Check Python version
@@ -286,15 +287,12 @@ tput sgr0
 
 CONFIG_FILE="config.json"
 
-# Check if config file already exists
-if [ -f "$CONFIG_FILE" ]; then
-  printf "\nFound existing %s. Skipping configuration steps.\n" "$CONFIG_FILE"
-else 
-  # If config doesn't exist, proceed with simplified setup
-  printf "No %s found. Proceeding with default configuration setup.\n" "$CONFIG_FILE"
+# If config doesn't exist, proceed with simplified setup
+# This printf is now more of a general statement as we always configure.
+printf "Loading existing settings from %s if present, then configuring.\n" "$CONFIG_FILE"
 
-  # Helper functions for user input (only select_from_list needed now)
-  select_from_list() {
+# Helper functions for user input (only select_from_list needed now)
+select_from_list() {
     local prompt="$1"
     shift
     local options=("$@")
@@ -322,137 +320,110 @@ else
         printf "Invalid selection. Please enter a number between 1 and %s.\n" "${#options[@]}"
       fi
     done
+}
+
+# Default values
+CAM_WIDTH=1280
+CAM_HEIGHT=720
+MODEL_NAME="yolov8x"
+MODEL_CONFIDENCE=0.25
+MODEL_IOU=0.45
+MODEL_CLASSES="[0]"
+OUTPUT_VERBOSE="false"
+OUTPUT_SUPER_QUIET="false"
+DEBUG_MODE="false"
+MULTIPROC_ENABLED="true"
+MULTIPROC_NUM_PROCESSES=2
+
+# Load existing config if present (this part is crucial and remains)
+if [ -f "$CONFIG_FILE" ]; then
+  printf "Found existing %s. Loading current values for applicable settings.\n" "$CONFIG_FILE"
+  # Basic parsing - assumes jq is not available for robustness
+  # This is a simplified parser. A more robust solution might use Python or jq.
+  # Camera settings will use script defaults unless overwritten by a future, more complex setup
+  # CAM_WIDTH, CAM_HEIGHT will use the new script defaults.
+
+  CURRENT_MODEL_NAME=$(grep '"NAME"' "$CONFIG_FILE" | sed -e 's/.*: *\"([^\"]*)\".*/\1/' || echo "$MODEL_NAME")
+  MODEL_NAME=${CURRENT_MODEL_NAME:-$MODEL_NAME}
+  
+  # MODEL_CONFIDENCE will use the new script default.
+  # OUTPUT_VERBOSE will use the new script default.
+  # DEBUG_MODE will use the new script default.
+  # MULTIPROC_ENABLED and NUM_PROCESSES will use new script defaults.
+fi
+
+printf "\n--- Camera Settings ---\n"
+printf "Default camera resolution set to %sx%s.\n" "$CAM_WIDTH" "$CAM_HEIGHT"
+
+printf "\n--- Model Settings ---\n"
+MODELS_DIR="models"
+AVAILABLE_MODELS=()
+if [ -d "$MODELS_DIR" ]; then
+  for f in "$MODELS_DIR"/*.pt; do
+    [ -e "$f" ] && AVAILABLE_MODELS+=("$(basename "$f")")
+  done
+fi
+
+COMMON_MODELS=("yolov8n.pt" "yolov8s.pt" "yolov8m.pt" "yolov8x.pt" "yolov5s.pt" "yolov5m.pt")
+ALL_CHOICES=()
+TEMP_CHOICES=("${AVAILABLE_MODELS[@]}" "${COMMON_MODELS[@]}")
+# Deduplicate and sort
+# shellcheck disable=SC2207
+ALL_CHOICES=( $(printf "%s\n" "${TEMP_CHOICES[@]}" | sort -u) )
+
+if [ ${#ALL_CHOICES[@]} -eq 0 ]; then
+  printf "No models found in ./models/ or common models list.\n"
+  read -rp "Enter desired model name (e.g., yolov8x, default: $MODEL_NAME): " model_name_input
+  MODEL_NAME=${model_name_input:-$MODEL_NAME}
+  # Ensure .pt is not part of the name for config, main.py adds it if needed for download
+  MODEL_NAME=${MODEL_NAME%.pt}
+else
+  SELECTED_MODEL_FILE=$(select_from_list "Select default YOLO model (current: $MODEL_NAME.pt):" "${ALL_CHOICES[@]}")
+  MODEL_NAME=${SELECTED_MODEL_FILE%.pt} # Store without .pt
+fi
+
+printf "Model confidence threshold set to %s.\n" "$MODEL_CONFIDENCE"
+
+printf "\n--- Output Settings ---\n"
+printf "Output verbosity set to standard (Verbose: %s, Super Quiet: %s).\n" "$OUTPUT_VERBOSE" "$OUTPUT_SUPER_QUIET"
+
+printf "\n--- Debug Settings ---\n"
+printf "Debug mode set to %s.\n" "$DEBUG_MODE"
+
+printf "\n--- Performance Settings ---\n"
+printf "Multiprocessing set to %s with %s processes.\n" "$MULTIPROC_ENABLED" "$MULTIPROC_NUM_PROCESSES"
+
+# Write to config.json
+printf "{
+  \"Camera\": {
+    \"width\": %d,
+    \"height\": %d
+  },
+  \"Model\": {
+    \"NAME\": \"%s\",
+    \"CONFIDENCE\": %s,
+    \"IOU\": %s,
+    \"CLASSES\": %s
+  },
+  \"Output\": {
+    \"VERBOSE\": %s,
+    \"SUPER_QUIET\": %s,
+    \"SUMMARY_ONLY\": false, 
+    \"EXTRA_VERBOSE\": false 
+  },
+  \"DEBUG_MODE\": %s,
+  \"MultiProcessing\": {
+    \"ENABLED\": %s,
+    \"NUM_PROCESSES\": %d
   }
+}
+" "$CAM_WIDTH" "$CAM_HEIGHT" \
+  "$MODEL_NAME" "$MODEL_CONFIDENCE" "$MODEL_IOU" "$MODEL_CLASSES" \
+  "$OUTPUT_VERBOSE" "$OUTPUT_SUPER_QUIET" \
+  "$DEBUG_MODE" \
+  "$MULTIPROC_ENABLED" "$MULTIPROC_NUM_PROCESSES" > "$CONFIG_FILE"
 
-  # Default values
-  CAM_WIDTH=1280
-  CAM_HEIGHT=720
-  MODEL_NAME="yolov8x"
-  MODEL_CONFIDENCE=0.25
-  MODEL_IOU=0.45
-  MODEL_CLASSES="[0]"
-  OUTPUT_VERBOSE="false"
-  OUTPUT_SUPER_QUIET="false"
-  DEBUG_MODE="false"
-  MULTIPROC_ENABLED="true"
-  MULTIPROC_NUM_PROCESSES=2
-
-  # Load existing config if present
-  if [ -f "$CONFIG_FILE" ]; then
-    printf "Found existing %s. Loading current values for applicable settings.\n" "$CONFIG_FILE"
-    # Basic parsing - assumes jq is not available for robustness
-    # This is a simplified parser. A more robust solution might use Python or jq.
-    # Camera settings will use script defaults unless overwritten by a future, more complex setup
-    # CAM_WIDTH, CAM_HEIGHT will use the new script defaults.
-
-    CURRENT_MODEL_NAME=$(grep '"NAME"' "$CONFIG_FILE" | sed -e 's/.*: *\"([^\"]*)\".*/\1/' || echo "$MODEL_NAME")
-    MODEL_NAME=${CURRENT_MODEL_NAME:-$MODEL_NAME}
-    
-    # MODEL_CONFIDENCE will use the new script default.
-    # OUTPUT_VERBOSE will use the new script default.
-    # DEBUG_MODE will use the new script default.
-    # MULTIPROC_ENABLED and NUM_PROCESSES will use new script defaults.
-  fi
-
-  printf "\n--- Camera Settings ---\n"
-  # RESOLUTIONS=("Low (640x480)" "HD (1280x720)" "Full HD (1920x1080)" "Custom") # Removed selection
-  # SELECTED_RES_KEY=$(select_from_list "Select camera capture resolution:" "${RESOLUTIONS[@]}")
-
-  # case "$SELECTED_RES_KEY" in
-  #   "Low (640x480)") CAM_WIDTH=640; CAM_HEIGHT=480 ;; 
-  #   "HD (1280x720)") CAM_WIDTH=1280; CAM_HEIGHT=720 ;; 
-  #   "Full HD (1920x1080)") CAM_WIDTH=1920; CAM_HEIGHT=1080 ;; 
-  #   "Custom") 
-  #     CAM_WIDTH=$(get_int_input "Enter custom width:" "$CAM_WIDTH")
-  #     CAM_HEIGHT=$(get_int_input "Enter custom height:" "$CAM_HEIGHT")
-  #     ;;
-  # esac
-  printf "Default camera resolution set to %sx%s.\n" "$CAM_WIDTH" "$CAM_HEIGHT"
-
-
-  printf "\n--- Model Settings ---\n"
-  MODELS_DIR="models"
-  AVAILABLE_MODELS=()
-  if [ -d "$MODELS_DIR" ]; then
-    for f in "$MODELS_DIR"/*.pt; do
-      [ -e "$f" ] && AVAILABLE_MODELS+=("$(basename "$f")")
-    done
-  fi
-
-  COMMON_MODELS=("yolov8n.pt" "yolov8s.pt" "yolov8m.pt" "yolov8x.pt" "yolov5s.pt" "yolov5m.pt")
-  ALL_CHOICES=()
-  TEMP_CHOICES=("${AVAILABLE_MODELS[@]}" "${COMMON_MODELS[@]}")
-  # Deduplicate and sort
-  # shellcheck disable=SC2207
-  ALL_CHOICES=( $(printf "%s\n" "${TEMP_CHOICES[@]}" | sort -u) )
-
-  if [ ${#ALL_CHOICES[@]} -eq 0 ]; then
-    printf "No models found in ./models/ or common models list.\n"
-    read -rp "Enter desired model name (e.g., yolov8x, default: $MODEL_NAME): " model_name_input
-    MODEL_NAME=${model_name_input:-$MODEL_NAME}
-    # Ensure .pt is not part of the name for config, main.py adds it if needed for download
-    MODEL_NAME=${MODEL_NAME%.pt}
-  else
-    SELECTED_MODEL_FILE=$(select_from_list "Select default YOLO model (current: $MODEL_NAME.pt):" "${ALL_CHOICES[@]}")
-    MODEL_NAME=${SELECTED_MODEL_FILE%.pt} # Store without .pt
-  fi
-
-  # MODEL_CONFIDENCE=$(get_float_input "Set model confidence threshold (0.0-1.0, current: $MODEL_CONFIDENCE):" "$MODEL_CONFIDENCE") # Removed
-  printf "Model confidence threshold set to %s.\n" "$MODEL_CONFIDENCE"
-
-  printf "\n--- Output Settings ---\n"
-  # if ask_yes_no "Enable verbose output (current: $OUTPUT_VERBOSE)?" "y"; then OUTPUT_VERBOSE="true"; else OUTPUT_VERBOSE="false"; fi # Removed
-  # if [ "$OUTPUT_VERBOSE" = "false" ]; then # Removed
-  #   if ask_yes_no "Enable super quiet mode (minimal output)?" "n"; then OUTPUT_SUPER_QUIET="true"; else OUTPUT_SUPER_QUIET="false"; fi # Removed
-  # else # Removed
-  #   OUTPUT_SUPER_QUIET="false" # Removed
-  # fi # Removed
-  printf "Output verbosity set to standard (Verbose: %s, Super Quiet: %s).\n" "$OUTPUT_VERBOSE" "$OUTPUT_SUPER_QUIET"
-
-  printf "\n--- Debug Settings ---\n"
-  # if ask_yes_no "Enable debug mode (saves intermediate images, current: $DEBUG_MODE)?" "n"; then DEBUG_MODE="true"; else DEBUG_MODE="false"; fi # Removed
-  printf "Debug mode set to %s.\n" "$DEBUG_MODE"
-
-  printf "\n--- Performance Settings ---\n"
-  # if ask_yes_no "Enable multiprocessing (current: $MULTIPROC_ENABLED)?" "y"; then MULTIPROC_ENABLED="true"; else MULTIPROC_ENABLED="false"; fi # Removed
-  # if [ "$MULTIPROC_ENABLED" = "true" ]; then # Removed
-  #   CPU_CORES=$(nproc --all || echo 4) # Get CPU cores, default 4 # Removed
-  #   MULTIPROC_NUM_PROCESSES=$(get_int_input "Number of processes to use (recommended: up to $CPU_CORES, current: $MULTIPROC_NUM_PROCESSES):" "$MULTIPROC_NUM_PROCESSES") # Removed
-  # fi # Removed
-  printf "Multiprocessing set to %s with %s processes.\n" "$MULTIPROC_ENABLED" "$MULTIPROC_NUM_PROCESSES"
-
-  # Write to config.json
-  printf "{
-    \"Camera\": {
-      \"width\": %d,
-      \"height\": %d
-    },
-    \"Model\": {
-      \"NAME\": \"%s\",
-      \"CONFIDENCE\": %s,
-      \"IOU\": %s,
-      \"CLASSES\": %s
-    },
-    \"Output\": {
-      \"VERBOSE\": %s,
-      \"SUPER_QUIET\": %s,
-      \"SUMMARY_ONLY\": false, 
-      \"EXTRA_VERBOSE\": false 
-    },
-    \"DEBUG_MODE\": %s,
-    \"MultiProcessing\": {
-      \"ENABLED\": %s,
-      \"NUM_PROCESSES\": %d
-    }
-  }
-  " "$CAM_WIDTH" "$CAM_HEIGHT" \
-    "$MODEL_NAME" "$MODEL_CONFIDENCE" "$MODEL_IOU" "$MODEL_CLASSES" \
-    "$OUTPUT_VERBOSE" "$OUTPUT_SUPER_QUIET" \
-    "$DEBUG_MODE" \
-    "$MULTIPROC_ENABLED" "$MULTIPROC_NUM_PROCESSES" > "$CONFIG_FILE"
-
-  printf "\nConfiguration saved to %s\n" "$CONFIG_FILE"
-fi # End of check for existing config file
+printf "\nConfiguration saved to %s\n" "$CONFIG_FILE"
 
 # --- End Configuration Section ---
 
