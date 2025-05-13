@@ -2226,6 +2226,105 @@ def test_yolov8_detector(image_path, model_name="yolov8x.pt", confidence=0.15, v
     # Return the people list for use in main.py
     return people
 
+# Add this function after the test_yolov8_detector function
+
+def run_performance_tests(input_image, output_dir="test_results", quick_mode=False, 
+                          specific_models=None, specific_resolution=None, specific_device=None):
+    """
+    Run a series of performance tests with different configurations to find the fastest combination.
+    
+    Args:
+        input_image: Path to input image for testing
+        output_dir: Directory to save test results
+        quick_mode: If True, run a limited set of tests
+        specific_models: List of specific models to test
+        specific_resolution: Specific resolution to test (tuple of width,height)
+        specific_device: Specific device to test ('cpu' or 'cuda')
+    """
+    # Create results directory
+    os.makedirs(output_dir, exist_ok=True)
+    results_file = os.path.join(output_dir, "performance_results.txt")
+    
+    # Settings to test - default choices
+    all_models = [
+        "yolov5n", "yolov8n", "yolov5s", "yolov8s",  # Smallest/fastest models first
+        "yolov5m", "yolov8m"  # Medium models (skip larger models for speed)
+    ]
+    
+    # Camera resolutions to test (for simulation only - not actually capturing)
+    all_resolutions = [
+        (640, 480),    # VGA
+        (1280, 720),   # 720p
+        (1920, 1080),  # 1080p
+        (2304, 1296),  # 3MP 
+        (4608, 2592)   # 12MP (Camera 3 full resolution)
+    ]
+    
+    # Process counts to test - default values
+    all_process_counts = [1, 2, 4, 8]
+    if cpu_count() <= 4:
+        all_process_counts = [1, 2, max(1, cpu_count()-1)]
+    
+    # Confidence thresholds - default values
+    all_confidence_thresholds = [0.1, 0.25, 0.4]
+    
+    # Devices to test - default values
+    all_devices = ["cpu"]
+    if torch.cuda.is_available():
+        all_devices.append("cuda")
+        print("CUDA detected - will test GPU acceleration")
+    
+    # Apply parameter overrides based on function arguments
+    # Quick mode override
+    if quick_mode:
+        all_models = all_models[:2]  # Just yolov5n and yolov8n
+        all_resolutions = [all_resolutions[0], all_resolutions[1]]  # Just VGA and 720p
+        all_process_counts = [1, max(1, cpu_count()-1)]  # Just 1 and max-1
+        all_confidence_thresholds = [0.25]  # Just middle confidence value
+    
+    # Specific models override
+    if specific_models:
+        models_to_test = specific_models
+        # Verify models exist
+        for model in models_to_test:
+            if model not in Config.Model.MODEL_URLS:
+                print(f"WARNING: Model {model} not found in known models - it may not work")
+    else:
+        models_to_test = all_models
+    
+    # Specific resolution override
+    if specific_resolution:
+        resolutions = [specific_resolution]
+    else:
+        resolutions = all_resolutions
+    
+    # Specific device override
+    if specific_device:
+        if specific_device == "cuda" and not torch.cuda.is_available():
+            print("WARNING: CUDA requested but not available, falling back to CPU")
+            devices = ["cpu"]
+        else:
+            devices = [specific_device]
+    else:
+        devices = all_devices
+    
+    # Process counts and confidence thresholds stay at defaults
+    process_counts = all_process_counts
+    confidence_thresholds = all_confidence_thresholds
+    
+    # Track results
+    results = []
+    test_count = (len(models_to_test) * 
+                 len(process_counts) * 
+                 len(confidence_thresholds) * 
+                 len(devices) * 
+                 len(resolutions))
+    
+    # Rest of the function remains the same...
+
+# Now update the command-line arguments parsing (in the if __name__ == "__main__": block)
+# Add this to the parser.add_argument section:
+
 if __name__ == "__main__":
     try:
         # Add command-line arguments for easier use
@@ -2247,6 +2346,14 @@ if __name__ == "__main__":
         parser.add_argument("--install-ultralytics", action="store_true", help="Install the ultralytics package")
         parser.add_argument("--test-yolo", action="store_true", help="Run YOLO model test on the input image")
         parser.add_argument("--no-camera", action="store_true", help="Skip camera capture and use default input image") # Add skip camera flag
+        
+        # Add new test mode arguments
+        parser.add_argument("--test-mode", action="store_true", help="Run performance tests to find fastest configuration")
+        parser.add_argument("--test-output-dir", type=str, default="test_results", help="Directory to save test results")
+        parser.add_argument("--test-quick", action="store_true", help="Run a quick test with limited models and configurations")
+        parser.add_argument("--test-models", type=str, default="all", help="Comma-separated list of models to test, e.g., 'yolov8n,yolov5n'")
+        parser.add_argument("--test-with-resolution", type=str, help="Use only the specified resolution for testing, e.g., '1280x720'")
+        parser.add_argument("--test-with-device", type=str, choices=["cpu", "cuda"], help="Use only the specified device for testing")
         
         # Parse arguments
         try:
@@ -2319,6 +2426,110 @@ if __name__ == "__main__":
             # Update extra verbose setting
             if args.extra_verbose:
                 Config.Output.EXTRA_VERBOSE = True
+            
+            # Handle test mode
+            if args.test_mode:
+                # Parse any specific test parameters
+                specific_models = None
+                if args.test_models and args.test_models.lower() != "all":
+                    specific_models = [model.strip() for model in args.test_models.split(",")]
+                
+                specific_resolution = None
+                if args.test_with_resolution:
+                    try:
+                        width, height = map(int, args.test_with_resolution.split("x"))
+                        specific_resolution = (width, height)
+                    except:
+                        print(f"Invalid resolution format: {args.test_with_resolution}, expected WIDTHxHEIGHT (e.g., 1280x720)")
+                        sys.exit(1)
+                
+                # Run the test
+                best_config, best_time = run_performance_tests(
+                    args.input, 
+                    args.test_output_dir, 
+                    quick_mode=args.test_quick,
+                    specific_models=specific_models,
+                    specific_resolution=specific_resolution,
+                    specific_device=args.test_with_device
+                )
+                
+                # Option to apply the best configuration
+                use_best = input("\nWould you like to apply the best configuration now? (y/n): ").lower().strip() == 'y'
+                if use_best:
+                    # Parse the best config
+                    parts = best_config.split('_')
+                    model = parts[0]
+                    processes = int(parts[1].replace('p', ''))
+                    confidence = float(parts[2].replace('c', ''))
+                    resolution = parts[3].replace('r', '').split('x')
+                    width, height = int(resolution[0]), int(resolution[1])
+                    device = parts[4]
+                    
+                    # Apply the best config
+                    Config.Model.NAME = model
+                    Config.Model.CONFIDENCE = confidence
+                    Config.MultiProcessing.NUM_PROCESSES = processes
+                    Config.MultiProcessing.ENABLED = (processes > 1)
+                    Config.Camera.WIDTH = width
+                    Config.Camera.HEIGHT = height
+                    
+                    print(f"\nApplied best configuration:")
+                    print(f"  - Model: {model}")
+                    print(f"  - Processes: {processes}")
+                    print(f"  - Confidence: {confidence}")
+                    print(f"  - Resolution: {width}x{height}")
+                    print(f"  - Device: {device}")
+                    
+                    # Save to config.json for future use
+                    save_config = input("Would you like to save this configuration to config.json for future use? (y/n): ").lower().strip() == 'y'
+                    if save_config:
+                        config_data = {
+                            "Model": {
+                                "NAME": model,
+                                "CONFIDENCE": confidence,
+                                "IOU": Config.Model.IOU,
+                                "CLASSES": Config.Model.CLASSES
+                            },
+                            "MultiProcessing": {
+                                "ENABLED": Config.MultiProcessing.ENABLED,
+                                "NUM_PROCESSES": processes
+                            },
+                            "Camera": {
+                                "width": width,
+                                "height": height
+                            },
+                            "Output": {
+                                "VERBOSE": Config.Output.VERBOSE,
+                                "SUPER_QUIET": Config.Output.SUPER_QUIET,
+                                "SUMMARY_ONLY": Config.Output.SUMMARY_ONLY,
+                                "EXTRA_VERBOSE": Config.Output.EXTRA_VERBOSE
+                            }
+                        }
+                        
+                        try:
+                            with open(CONFIG_FILE, 'w') as f:
+                                json.dump(config_data, f, indent=4)
+                            print(f"Configuration saved to {CONFIG_FILE}")
+                        except Exception as e:
+                            print(f"Error saving configuration: {str(e)}")
+                    
+                    # Ask if they want to run with this configuration
+                    run_with_best = input("Would you like to run with this configuration now? (y/n): ").lower().strip() == 'y'
+                    if run_with_best:
+                        args.model = model
+                        args.processes = processes
+                        if device == "cuda" and torch.cuda.is_available():
+                            args.device = "cuda"
+                        else:
+                            args.device = "cpu"
+                        print(f"\nRunning with best configuration...")
+                        sys.exit(main())
+                    else:
+                        print("Exiting.")
+                        sys.exit(0)
+                else:
+                    print("Exiting.")
+                    sys.exit(0)
             
             sys.exit(main())
         except Exception as e:

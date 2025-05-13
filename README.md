@@ -161,6 +161,33 @@ python main.py [options]
 - `--show-labels`: Show detailed labels on output image
 - `--processes NUM`: Set number of processes for multiprocessing
 
+### Performance Testing
+
+The program includes a comprehensive performance testing mode to find the fastest configuration:
+
+```
+python main.py --test-mode [options]
+```
+
+Performance test options:
+- `--test-mode`: Run performance tests to find the fastest configuration
+- `--test-output-dir DIR`: Directory to save test results (default: test_results)
+- `--test-quick`: Run a quick test with limited models and configurations
+- `--test-models LIST`: Comma-separated list of models to test (e.g., "yolov8n,yolov5n")
+- `--test-with-resolution WxH`: Test only with the specified resolution (e.g., "1280x720")
+- `--test-with-device cpu|cuda`: Test only with the specified device
+
+Example:
+```bash
+# Quick test with smallest models
+python main.py --test-mode --test-quick --input images/input.png
+
+# Test specific models at a specific resolution on specific device
+python main.py --test-mode --test-models yolov8n,yolov5n --test-with-resolution 640x480 --test-with-device cpu
+```
+
+After testing, the program will offer to apply the fastest configuration and save it to `config.json` for future use.
+
 ## Direct Camera Usage
 
 You can test the camera directly:
