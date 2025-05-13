@@ -31,6 +31,27 @@ import subprocess
 import math
 import platform
 import camera as camera_module # Import camera module
+
+# Context manager to suppress stdout and stderr
+class suppress_stdout_stderr:
+    """
+    Context manager to suppress standard output and error streams.
+    
+    Usage:
+        with suppress_stdout_stderr():
+            # code that might print unwanted output
+    """
+    def __enter__(self):
+        self.stdout = sys.stdout
+        self.stderr = sys.stderr
+        sys.stdout = io.StringIO()
+        sys.stderr = io.StringIO()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        sys.stdout = self.stdout
+        sys.stderr = self.stderr
+
 # Global variables
 args = None  # Will store command-line arguments
 # Check if ultralytics is installed for YOLOv8 models

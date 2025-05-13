@@ -7,6 +7,7 @@ import io
 import re
 import contextlib
 from contextlib import redirect_stdout, redirect_stderr
+from datetime import datetime
 
 # --- Output Styling (mimicking main.py's OutputManager) ---
 # ANSI color codes
@@ -19,7 +20,7 @@ COLOR_GRAY = "\033[90m" # For DEBUG
 COLOR_RESET = "\033[0m"
 COLOR_BOLD = "\033[1m"
 
-# Symbols
+# Symbols - Match exactly with main.py
 SYMBOL_SUCCESS = "✓"
 SYMBOL_INFO = "ℹ"
 SYMBOL_WARNING = "⚠"
@@ -51,8 +52,32 @@ def _log_camera_message(message, level="INFO"):
         color = COLOR_GRAY
         symbol = SYMBOL_DEBUG
     
-    print(f"{color}{symbol} {message}{COLOR_RESET}")
-# --- End Output Styling ---
+    # Add timestamp to match main.py format
+    timestamp = datetime.now().strftime("%H:%M:%S") + " " 
+    
+    # Use sys.stdout.write for consistency with main.py
+    sys.stdout.write(f"{timestamp}{color}{symbol} {message}{COLOR_RESET}\n")
+    sys.stdout.flush()
+
+# Context manager to suppress stdout and stderr 
+class suppress_stdout_stderr:
+    """
+    Context manager to suppress standard output and error streams.
+    
+    Usage:
+        with suppress_stdout_stderr():
+            # code that might print unwanted output
+    """
+    def __enter__(self):
+        self.stdout = sys.stdout
+        self.stderr = sys.stderr
+        sys.stdout = io.StringIO()
+        sys.stderr = io.StringIO()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        sys.stdout = self.stdout
+        sys.stderr = self.stderr
 
 # Define platform and architecture detection
 IS_RASPBERRY_PI = False

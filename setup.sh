@@ -433,14 +433,20 @@ while true; do
 done
 
 # Model confidence threshold
-MODEL_CONFIDENCE=$(get_user_input "Enter detection confidence threshold (0.1-0.9)" "$MODEL_CONFIDENCE")
+MODEL_CONFIDENCE=$(get_user_input "Enter detection confidence threshold (0.1-0.9) - lower values detect more people but may cause false positives" "$MODEL_CONFIDENCE")
 printf "Model confidence threshold set to %s.\n" "$MODEL_CONFIDENCE"
 
 printf "\n--- Output Settings ---\n"
 OUTPUT_VERBOSE=$(get_boolean_input "Enable verbose output" "$OUTPUT_VERBOSE")
 OUTPUT_SUPER_QUIET=$(get_boolean_input "Enable super quiet mode (minimal output)" "$OUTPUT_SUPER_QUIET")
 OUTPUT_SUMMARY_ONLY=$(get_boolean_input "Show only summary results" "$OUTPUT_SUMMARY_ONLY")
-OUTPUT_EXTRA_VERBOSE=$(get_boolean_input "Enable extra verbose output (debugging)" "$OUTPUT_EXTRA_VERBOSE")
+
+# Only ask for EXTRA_VERBOSE if VERBOSE is enabled
+if [ "$OUTPUT_VERBOSE" = "true" ]; then
+  OUTPUT_EXTRA_VERBOSE=$(get_boolean_input "Enable extra verbose output (debugging)" "$OUTPUT_EXTRA_VERBOSE")
+else
+  OUTPUT_EXTRA_VERBOSE="false"
+fi
 
 printf "\n--- Debug Settings ---\n"
 DEBUG_MODE=$(get_boolean_input "Enable debug mode" "$DEBUG_MODE")
@@ -469,10 +475,8 @@ else
   MULTIPROC_NUM_PROCESSES=1
 fi
 
-# Object detection classes (usually just people = 0)
-printf "\nDetection classes setting: %s (0=person, default is person only)\n" "$MODEL_CLASSES"
-printf "To detect only people, use [0]. To detect multiple classes, use format [0,1,2]\n"
-MODEL_CLASSES=$(get_user_input "Detection classes" "$MODEL_CLASSES")
+# We'll use person detection only (class 0)
+MODEL_CLASSES="[0]"
 
 # Write to config.json
 cat > "$CONFIG_FILE" << EOF
