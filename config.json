@@ -1,25 +1,79 @@
 {
+  "# CAMERA SETTINGS": "Configure camera resolution for Raspberry Pi camera",
   "Camera": {
     "width": 1280,
-    "height": 720
+    "height": 720,
+    "# RESOLUTION GUIDE": "Pi Camera 3 resolutions: 640x480 (VGA), 1280x720 (HD), 1920x1080 (Full HD), 2304x1296 (3MP), 4608x2592 (12MP)"
   },
+
+  "# MODEL SETTINGS": "Configure object detection model",
   "Model": {
+    "# NAME": "Model options: yolov8n (nano), yolov8s (small), yolov8m (medium), yolov8l (large), yolov8x (xlarge)",
     "NAME": "yolov8n",
+    "# CONFIDENCE": "Detection threshold (0.1-0.9). Lower = more detections but more false positives",
     "CONFIDENCE": 0.1,
+    "# IOU": "Intersection over union threshold for non-maximum suppression",
     "IOU": 0.45,
+    "# CLASSES": "Object classes to detect. 0=person, 1=bicycle, 2=car, etc. Use [0] for people only",
     "CLASSES": [
       0
     ]
   },
+
+  "# OUTPUT SETTINGS": "Configure console output",
   "Output": {
+    "# VERBOSE": "Set to true for detailed information during detection",
     "VERBOSE": false,
+    "# SUPER_QUIET": "Set to true for minimal output (errors only)",
     "SUPER_QUIET": false,
+    "# SUMMARY_ONLY": "Set to true to show only the final summary",
     "SUMMARY_ONLY": false,
+    "# EXTRA_VERBOSE": "Set to true for maximum debugging information",
     "EXTRA_VERBOSE": false
   },
+
+  "# DEBUG_MODE": "Set to true to save debug images and data",
   "DEBUG_MODE": false,
+
+  "# MULTIPROCESSING SETTINGS": "Configure parallel processing",
   "MultiProcessing": {
+    "# ENABLED": "Set to false to disable parallel processing",
     "ENABLED": true,
+    "# NUM_PROCESSES": "Number of CPU cores to use (recommended: number of cores - 1)",
     "NUM_PROCESSES": 4
+  },
+
+  "# VISUAL SETTINGS": "Configure output image appearance",
+  "Visual": {
+    "# COURT_OUTLINE_COLOR": "RGB color for court outlines (0-255)",
+    "COURT_OUTLINE_COLOR": [0, 255, 0],
+    "# COURT_OUTLINE_THICKNESS": "Line thickness for court outlines",
+    "COURT_OUTLINE_THICKNESS": 4,
+    "# PERSON_IN_BOUNDS_COLOR": "RGB color for people on court",
+    "PERSON_IN_BOUNDS_COLOR": [0, 255, 0],
+    "# PERSON_OUT_BOUNDS_COLOR": "RGB color for people near court",
+    "PERSON_OUT_BOUNDS_COLOR": [0, 165, 255],
+    "# PERSON_OFF_COURT_COLOR": "RGB color for people off court",
+    "PERSON_OFF_COURT_COLOR": [0, 0, 255],
+    "# DRAW_COURT_OUTLINE": "Whether to draw the court outline",
+    "DRAW_COURT_OUTLINE": true,
+    "# SHOW_COURT_NUMBER": "Whether to show court number in labels",
+    "SHOW_COURT_NUMBER": true,
+    "# SHOW_DETAILED_LABELS": "Whether to show detailed labels on output",
+    "SHOW_DETAILED_LABELS": true
+  },
+
+  "# COURT DETECTION SETTINGS": "Configure tennis court detection sensitivity",
+  "Court": {
+    "# MIN_AREA": "Minimum area for court detection (pixels)",
+    "MIN_AREA": 3000,
+    "# MAX_AREA": "Maximum area for court detection (pixels)",
+    "MAX_AREA": 200000,
+    "# MIN_SCORE": "Minimum confidence score for valid court",
+    "MIN_SCORE": 0.5,
+    "# MIN_ASPECT_RATIO": "Minimum width/height ratio for court",
+    "MIN_ASPECT_RATIO": 1.0,
+    "# MAX_ASPECT_RATIO": "Maximum width/height ratio for court",
+    "MAX_ASPECT_RATIO": 4.0
   }
 } 

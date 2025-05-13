@@ -218,10 +218,9 @@ tput sgr0
 CONFIG_FILE="config.json"
 
 # If config doesn't exist, proceed with simplified setup
-# This printf is now more of a general statement as we always configure.
-printf "Loading existing settings from %s if present, then configuring.\n" "$CONFIG_FILE"
+printf "Creating or updating configuration in %s\n" "$CONFIG_FILE"
 
-# Helper functions for user input (only select_from_list needed now)
+# Helper functions for user input
 select_from_list() {
     local prompt="$1"
     shift
@@ -252,6 +251,39 @@ select_from_list() {
     done
 }
 
+get_user_input() {
+    local prompt="$1"
+    local default="$2"
+    local result
+    
+    read -rp "$prompt [$default]: " result
+    echo "${result:-$default}"
+}
+
+get_boolean_input() {
+    local prompt="$1"
+    local default="$2"
+    local choice
+    
+    while true; do
+        read -rp "$prompt (yes/no) [$default]: " choice
+        choice=${choice:-$default}
+        case "$choice" in
+            [Yy]|[Yy][Ee][Ss])
+                echo "true"
+                return 0
+                ;;
+            [Nn]|[Nn][Oo])
+                echo "false"
+                return 0
+                ;;
+            *)
+                printf "Please answer 'yes' or 'no'.\n"
+                ;;
+        esac
+    done
+}
+
 # Default values
 CAM_WIDTH=1280
 CAM_HEIGHT=720
@@ -261,44 +293,92 @@ MODEL_IOU=0.45
 MODEL_CLASSES="[0]"
 OUTPUT_VERBOSE="false"
 OUTPUT_SUPER_QUIET="false"
+OUTPUT_SUMMARY_ONLY="false"
+OUTPUT_EXTRA_VERBOSE="false"
 DEBUG_MODE="false"
 MULTIPROC_ENABLED="true"
 MULTIPROC_NUM_PROCESSES=4
 
-# Load existing config if present (this part is crucial and remains)
+# Load existing config if present
 if [ -f "$CONFIG_FILE" ]; then
   printf "Found existing %s. Loading current values for applicable settings.\n" "$CONFIG_FILE"
-  # Basic parsing - assumes jq is not available for robustness
-  # This is a simplified parser. A more robust solution might use Python or jq.
-  # Camera settings will use script defaults unless overwritten by a future, more complex setup
-  # CAM_WIDTH, CAM_HEIGHT will use the new script defaults.
-
-  CURRENT_MODEL_NAME=$(grep '"NAME"' "$CONFIG_FILE" | sed -e 's/.*: *\"([^\"]*)\".*/\1/' || echo "$MODEL_NAME")
+  
+  # Extract values using grep/sed - this is basic parsing
+  # We only extract values we need; for more complex parsing you might use jq or python
+  
+  # Camera settings
+  CURRENT_WIDTH=$(grep -o '"width": *[0-9]\+' "$CONFIG_FILE" | grep -o '[0-9]\+' || echo "$CAM_WIDTH")
+  CAM_WIDTH=${CURRENT_WIDTH:-$CAM_WIDTH}
+  
+  CURRENT_HEIGHT=$(grep -o '"height": *[0-9]\+' "$CONFIG_FILE" | grep -o '[0-9]\+' || echo "$CAM_HEIGHT")
+  CAM_HEIGHT=${CURRENT_HEIGHT:-$CAM_HEIGHT}
+  
+  # Model settings
+  CURRENT_MODEL_NAME=$(grep -o '"NAME": *"[^"]*"' "$CONFIG_FILE" | grep -o '"[^"]*"$' | tr -d '"' || echo "$MODEL_NAME")
   MODEL_NAME=${CURRENT_MODEL_NAME:-$MODEL_NAME}
   
-  # MODEL_CONFIDENCE will use the new script default.
-  # OUTPUT_VERBOSE will use the new script default.
-  # DEBUG_MODE will use the new script default.
-  # MULTIPROC_ENABLED and NUM_PROCESSES will use new script defaults.
+  CURRENT_MODEL_CONFIDENCE=$(grep -o '"CONFIDENCE": *[0-9.]\+' "$CONFIG_FILE" | grep -o '[0-9.]\+$' || echo "$MODEL_CONFIDENCE")
+  MODEL_CONFIDENCE=${CURRENT_MODEL_CONFIDENCE:-$MODEL_CONFIDENCE}
+  
+  CURRENT_MODEL_IOU=$(grep -o '"IOU": *[0-9.]\+' "$CONFIG_FILE" | grep -o '[0-9.]\+$' || echo "$MODEL_IOU")
+  MODEL_IOU=${CURRENT_MODEL_IOU:-$MODEL_IOU}
+  
+  # Extract CLASSES array - simplified by always using [0] if parsing fails
+  CURRENT_MODEL_CLASSES=$(grep -A 5 '"CLASSES":' "$CONFIG_FILE" | grep -o '\[[^]]*\]' || echo "$MODEL_CLASSES")
+  MODEL_CLASSES=${CURRENT_MODEL_CLASSES:-$MODEL_CLASSES}
+  
+  # Output settings
+  CURRENT_OUTPUT_VERBOSE=$(grep -o '"VERBOSE": *\(true\|false\)' "$CONFIG_FILE" | grep -o '\(true\|false\)$' || echo "$OUTPUT_VERBOSE")
+  OUTPUT_VERBOSE=${CURRENT_OUTPUT_VERBOSE:-$OUTPUT_VERBOSE}
+  
+  CURRENT_OUTPUT_SUPER_QUIET=$(grep -o '"SUPER_QUIET": *\(true\|false\)' "$CONFIG_FILE" | grep -o '\(true\|false\)$' || echo "$OUTPUT_SUPER_QUIET")
+  OUTPUT_SUPER_QUIET=${CURRENT_OUTPUT_SUPER_QUIET:-$OUTPUT_SUPER_QUIET}
+  
+  CURRENT_OUTPUT_SUMMARY_ONLY=$(grep -o '"SUMMARY_ONLY": *\(true\|false\)' "$CONFIG_FILE" | grep -o '\(true\|false\)$' || echo "$OUTPUT_SUMMARY_ONLY")
+  OUTPUT_SUMMARY_ONLY=${CURRENT_OUTPUT_SUMMARY_ONLY:-$OUTPUT_SUMMARY_ONLY}
+  
+  CURRENT_OUTPUT_EXTRA_VERBOSE=$(grep -o '"EXTRA_VERBOSE": *\(true\|false\)' "$CONFIG_FILE" | grep -o '\(true\|false\)$' || echo "$OUTPUT_EXTRA_VERBOSE")
+  OUTPUT_EXTRA_VERBOSE=${CURRENT_OUTPUT_EXTRA_VERBOSE:-$OUTPUT_EXTRA_VERBOSE}
+  
+  # Debug mode
+  CURRENT_DEBUG_MODE=$(grep -o '"DEBUG_MODE": *\(true\|false\)' "$CONFIG_FILE" | grep -o '\(true\|false\)$' || echo "$DEBUG_MODE")
+  DEBUG_MODE=${CURRENT_DEBUG_MODE:-$DEBUG_MODE}
+  
+  # MultiProcessing settings
+  CURRENT_MULTIPROC_ENABLED=$(grep -o '"ENABLED": *\(true\|false\)' "$CONFIG_FILE" | grep -o '\(true\|false\)$' || echo "$MULTIPROC_ENABLED")
+  MULTIPROC_ENABLED=${CURRENT_MULTIPROC_ENABLED:-$MULTIPROC_ENABLED}
+  
+  CURRENT_MULTIPROC_NUM_PROCESSES=$(grep -o '"NUM_PROCESSES": *[0-9]\+' "$CONFIG_FILE" | grep -o '[0-9]\+$' || echo "$MULTIPROC_NUM_PROCESSES")
+  MULTIPROC_NUM_PROCESSES=${CURRENT_MULTIPROC_NUM_PROCESSES:-$MULTIPROC_NUM_PROCESSES}
 fi
 
 printf "\n--- Camera Settings ---\n"
+# Resolutions ordered by size with human-readable naming
 RESOLUTIONS=(
-  "1280x720 (HD - Recommended)"
-  "1920x1080 (Full HD)"
-  "640x480 (VGA)"
-  "800x600 (SVGA)"
-  "1024x768 (XGA)"
+  "640x480 (VGA - Standard definition)"
+  "1280x720 (HD - High definition, balanced)"
+  "1920x1080 (Full HD - 1080p)"
+  "2304x1296 (3MP - Higher resolution)"
+  "4608x2592 (12MP - Maximum Pi Camera 3 resolution, may impact performance)"
 )
 
-printf "Select camera resolution:\n"
+printf "Select camera resolution for Pi Camera 3:\n"
 for i in "${!RESOLUTIONS[@]}"; do
   printf "  %d. %s\n" "$((i+1))" "${RESOLUTIONS[$i]}"
 done
 
+# Find current resolution in the list
+current_res_index=4  # Default to HD (1280x720)
+for i in "${!RESOLUTIONS[@]}"; do
+  if [[ "${RESOLUTIONS[$i]}" =~ ${CAM_WIDTH}x${CAM_HEIGHT} ]]; then
+    current_res_index=$i
+    break
+  fi
+done
+
 while true; do
-  read -rp "Enter number (default: 1. ${RESOLUTIONS[0]}): " choice
-  choice=${choice:-1}
+  read -rp "Enter number (default: $((current_res_index+1)). ${RESOLUTIONS[$current_res_index]}): " choice
+  choice=${choice:-$((current_res_index+1))}
   if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#RESOLUTIONS[@]}" ]; then
     selected_res="${RESOLUTIONS[$((choice-1))]}"
     # Extract resolution values using regex
@@ -314,19 +394,85 @@ while true; do
 done
 
 printf "\n--- Model Settings ---\n"
-MODELS_DIR="models"
-MODEL_NAME="yolov8x"
-printf "Using default model: %s\n" "$MODEL_NAME"
-printf "Model confidence threshold set to %s\n" "$MODEL_CONFIDENCE"
+MODELS=(
+  "yolov8n (Nano - Smallest and fastest, lower accuracy)"
+  "yolov8s (Small - Good balance of speed and accuracy)"
+  "yolov8m (Medium - Better accuracy, moderate speed)"
+  "yolov8l (Large - High accuracy, slower)"
+  "yolov8x (XLarge - Highest accuracy, slowest)"
+)
+
+# Find current model in the list
+model_index=4  # Default to XLarge
+for i in "${!MODELS[@]}"; do
+  if [[ "${MODELS[$i]}" =~ ${MODEL_NAME} ]]; then
+    model_index=$i
+    break
+  fi
+done
+
+printf "Select YOLO model size for people detection:\n"
+for i in "${!MODELS[@]}"; do
+  printf "  %d. %s\n" "$((i+1))" "${MODELS[$i]}"
+done
+
+while true; do
+  read -rp "Enter number (default: $((model_index+1)). ${MODELS[$model_index]}): " choice
+  choice=${choice:-$((model_index+1))}
+  if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#MODELS[@]}" ]; then
+    selected_model="${MODELS[$((choice-1))]}"
+    # Extract model name
+    if [[ $selected_model =~ (yolov[0-9][nsmplx]+) ]]; then
+      MODEL_NAME="${BASH_REMATCH[1]}"
+      printf "Model set to %s.\n" "$MODEL_NAME"
+      break
+    fi
+  else
+    printf "Invalid selection. Please enter a number between 1 and %s.\n" "${#MODELS[@]}"
+  fi
+done
+
+# Model confidence threshold
+MODEL_CONFIDENCE=$(get_user_input "Enter detection confidence threshold (0.1-0.9)" "$MODEL_CONFIDENCE")
+printf "Model confidence threshold set to %s.\n" "$MODEL_CONFIDENCE"
 
 printf "\n--- Output Settings ---\n"
-printf "Using standard output settings\n"
+OUTPUT_VERBOSE=$(get_boolean_input "Enable verbose output" "$OUTPUT_VERBOSE")
+OUTPUT_SUPER_QUIET=$(get_boolean_input "Enable super quiet mode (minimal output)" "$OUTPUT_SUPER_QUIET")
+OUTPUT_SUMMARY_ONLY=$(get_boolean_input "Show only summary results" "$OUTPUT_SUMMARY_ONLY")
+OUTPUT_EXTRA_VERBOSE=$(get_boolean_input "Enable extra verbose output (debugging)" "$OUTPUT_EXTRA_VERBOSE")
 
 printf "\n--- Debug Settings ---\n"
-printf "Debug mode disabled\n"
+DEBUG_MODE=$(get_boolean_input "Enable debug mode" "$DEBUG_MODE")
 
 printf "\n--- Performance Settings ---\n"
-printf "Using multiprocessing with 4 processes\n"
+MULTIPROC_ENABLED=$(get_boolean_input "Enable multiprocessing" "$MULTIPROC_ENABLED")
+
+if [ "$MULTIPROC_ENABLED" = "true" ]; then
+  # Determine CPU count
+  CPU_COUNT=4
+  if command_exists nproc; then
+    CPU_COUNT=$(nproc)
+  elif [ -f /proc/cpuinfo ]; then
+    CPU_COUNT=$(grep -c processor /proc/cpuinfo)
+  elif command_exists sysctl && sysctl -n hw.ncpu >/dev/null 2>&1; then
+    CPU_COUNT=$(sysctl -n hw.ncpu)
+  fi
+  
+  # Recommend a reasonable number of processes
+  RECOMMENDED_PROCS=$((CPU_COUNT - 1))
+  [ "$RECOMMENDED_PROCS" -lt 1 ] && RECOMMENDED_PROCS=1
+  
+  printf "System has %d CPU cores. Recommended processes: %d\n" "$CPU_COUNT" "$RECOMMENDED_PROCS"
+  MULTIPROC_NUM_PROCESSES=$(get_user_input "Number of processes for multiprocessing" "$RECOMMENDED_PROCS")
+else
+  MULTIPROC_NUM_PROCESSES=1
+fi
+
+# Object detection classes (usually just people = 0)
+printf "\nDetection classes setting: %s (0=person, default is person only)\n" "$MODEL_CLASSES"
+printf "To detect only people, use [0]. To detect multiple classes, use format [0,1,2]\n"
+MODEL_CLASSES=$(get_user_input "Detection classes" "$MODEL_CLASSES")
 
 # Write to config.json
 cat > "$CONFIG_FILE" << EOF
@@ -344,8 +490,8 @@ cat > "$CONFIG_FILE" << EOF
   "Output": {
     "VERBOSE": $OUTPUT_VERBOSE,
     "SUPER_QUIET": $OUTPUT_SUPER_QUIET,
-    "SUMMARY_ONLY": false,
-    "EXTRA_VERBOSE": false
+    "SUMMARY_ONLY": $OUTPUT_SUMMARY_ONLY,
+    "EXTRA_VERBOSE": $OUTPUT_EXTRA_VERBOSE
   },
   "DEBUG_MODE": $DEBUG_MODE,
   "MultiProcessing": {
@@ -356,6 +502,7 @@ cat > "$CONFIG_FILE" << EOF
 EOF
 
 printf "\nConfiguration saved to %s\n" "$CONFIG_FILE"
+printf "You can edit this file directly anytime to adjust settings.\n"
 
 # --- End Configuration Section ---
 
@@ -375,5 +522,6 @@ printf "Post-install instructions:\n"
 tput sgr0
 printf "1. Activate virtual environment: source venv/bin/activate\n"
 printf "2. Run detection: python main.py\n"
-printf "3. For camera usage: python main.py --no-camera\n"
-printf "4. For specific image: python main.py --input images/input.png\n\n"
+printf "3. For camera usage: python main.py\n"
+printf "4. To skip camera and use test image: python main.py --no-camera\n"
+printf "5. Edit config.json anytime to change settings\n\n"

@@ -60,8 +60,17 @@ IS_64BIT = False
 PI_MODEL = "unknown"
 PI_CAMERA_VERSION = None
 
-# Lower default resolution for better performance
-DEFAULT_RESOLUTION = (640, 480)  # Reduced from 1920x1080 to 640x480 for better performance
+# Standard resolutions for reference - specific to Raspberry Pi Camera 3
+CAMERA_RESOLUTIONS = {
+    "VGA": (640, 480),      # Standard Definition
+    "HD": (1280, 720),      # High Definition
+    "FULL_HD": (1920, 1080), # Full HD (1080p)
+    "3MP": (2304, 1296),    # 3 Megapixel
+    "12MP": (4608, 2592)    # 12 Megapixel (Camera 3 full resolution)
+}
+
+# Default HD resolution (recommended balance of quality and performance)
+DEFAULT_RESOLUTION = CAMERA_RESOLUTIONS["HD"]
 
 try:
     # Check if running on Raspberry Pi
@@ -206,6 +215,38 @@ class CameraOutputFormatter:
                 else:
                     print(f"✓ {line}")
 
+# Function to validate and correct resolution
+def validate_resolution(width, height):
+    """
+    Validates camera resolution and returns appropriate values.
+    If invalid values are provided, defaults to HD (1280x720).
+    
+    Args:
+        width: Requested width in pixels
+        height: Requested height in pixels
+        
+    Returns:
+        tuple: (width, height) validated resolution
+    """
+    # Handle invalid values
+    try:
+        width = int(width)
+        height = int(height)
+    except (ValueError, TypeError):
+        _log_camera_message(f"Invalid resolution values: {width}x{height}, using default {DEFAULT_RESOLUTION}", "WARNING")
+        return DEFAULT_RESOLUTION
+    
+    # Ensure minimum resolution
+    if width < 160 or height < 120:
+        _log_camera_message(f"Resolution too small: {width}x{height}, using minimum 160x120", "WARNING")
+        return (160, 120)
+    
+    # Warn about extremely high resolutions on Raspberry Pi
+    if IS_RASPBERRY_PI and (width > 2560 or height > 1440):
+        _log_camera_message(f"High resolution {width}x{height} may cause performance issues on Raspberry Pi", "WARNING")
+    
+    return (width, height)
+
 # Keep the decorator for when this module is used directly
 @format_camera_output
 def takePhoto(output_dir='output', output_filename='input.png', width=1280, height=720):
@@ -231,7 +272,7 @@ def takePhoto(output_dir='output', output_filename='input.png', width=1280, heig
     try:
         # Combine output_dir and output_filename
         output_file = os.path.join(output_dir, output_filename)
-        resolution = (width, height)
+        resolution = validate_resolution(width, height)
         
         _log_camera_message(f"Preparing to capture photo at {resolution} to {output_file}", "STATUS")
         
@@ -270,6 +311,7 @@ def takePhoto(output_dir='output', output_filename='input.png', width=1280, heig
             elif PI_CAMERA_VERSION == 1:
                 with picamera.PiCamera() as camera:
                     camera.resolution = resolution
+                    # Add more camera settings from config.json if needed in future
                     camera.start_preview()
                     time.sleep(0.5) # Give camera time to adjust
                     camera.capture(output_file)
@@ -280,7 +322,7 @@ def takePhoto(output_dir='output', output_filename='input.png', width=1280, heig
             return False
 
     if capture_success:
-        _log_camera_message(f"Photo captured successfully: {output_file}", "SUCCESS")
+        _log_camera_message(f"Photo captured successfully at resolution {resolution[0]}x{resolution[1]}: {output_file}", "SUCCESS")
         return True
     else:
         _log_camera_message("Photo capture failed", "ERROR")
@@ -290,31 +332,55 @@ def takePhoto(output_dir='output', output_filename='input.png', width=1280, heig
 if __name__ == "__main__":
     _log_camera_message("Camera script running directly.", "INFO")
     
+    # Print available resolutions
+    _log_camera_message("Available standard resolutions:", "INFO")
+    for name, res in CAMERA_RESOLUTIONS.items():
+        _log_camera_message(f"  {name}: {res[0]}x{res[1]}", "INFO")
+    
     current_resolution = DEFAULT_RESOLUTION
-    output_filename = "images/capture_test.png" # Default for direct run
+    output_dir = "images"
+    output_filename = "capture_test.png" # Default for direct run
 
     # Allow command-line arguments: python camera.py [output_path] [width,height]
     if len(sys.argv) > 1:
-        output_filename = sys.argv[1]
-        _log_camera_message(f"Output file specified: {output_filename}", "INFO")
-        if len(sys.argv) > 2 and "," in sys.argv[2]:
-            try:
-                w_str, h_str = sys.argv[2].split(',')
-                w, h = int(w_str), int(h_str)
-                if w > 0 and h > 0:
-                    current_resolution = (w, h)
-                    _log_camera_message(f"Using custom resolution: {current_resolution}", "INFO")
-                else:
-                    _log_camera_message(f"Invalid resolution values: {w_str},{h_str}. Using default.", "WARNING")
-            except ValueError:
-                _log_camera_message(f"Could not parse resolution: {sys.argv[2]}. Using default.", "WARNING")
+        # Check if first argument specifies a named resolution
+        if sys.argv[1].upper() in CAMERA_RESOLUTIONS:
+            current_resolution = CAMERA_RESOLUTIONS[sys.argv[1].upper()]
+            _log_camera_message(f"Using {sys.argv[1].upper()} resolution: {current_resolution[0]}x{current_resolution[1]}", "INFO")
+        elif os.path.dirname(sys.argv[1]): # If first arg includes a directory path
+            output_dir = os.path.dirname(sys.argv[1])
+            output_filename = os.path.basename(sys.argv[1])
+            _log_camera_message(f"Output specified: dir={output_dir}, file={output_filename}", "INFO")
+        else:
+            # Just the filename specified
+            output_filename = sys.argv[1]
+            _log_camera_message(f"Output filename specified: {output_filename}", "INFO")
+            
+        # Check for resolution as second argument
+        if len(sys.argv) > 2:
+            if sys.argv[2].upper() in CAMERA_RESOLUTIONS:
+                # Use named resolution
+                current_resolution = CAMERA_RESOLUTIONS[sys.argv[2].upper()]
+                _log_camera_message(f"Using {sys.argv[2].upper()} resolution: {current_resolution[0]}x{current_resolution[1]}", "INFO")
+            elif "," in sys.argv[2]:
+                # Parse custom resolution
+                try:
+                    w_str, h_str = sys.argv[2].split(',')
+                    w, h = int(w_str), int(h_str)
+                    if w > 0 and h > 0:
+                        current_resolution = (w, h)
+                        _log_camera_message(f"Using custom resolution: {current_resolution[0]}x{current_resolution[1]}", "INFO")
+                    else:
+                        _log_camera_message(f"Invalid resolution values: {w_str},{h_str}. Using default.", "WARNING")
+                except ValueError:
+                    _log_camera_message(f"Could not parse resolution: {sys.argv[2]}. Using default.", "WARNING")
     else:
-        _log_camera_message(f"Using default output: {output_filename} and resolution: {current_resolution}", "INFO")
+        _log_camera_message(f"Using default output: {output_dir}/{output_filename} and resolution: {current_resolution[0]}x{current_resolution[1]}", "INFO")
 
     _log_camera_message("Attempting to take photo...", "STATUS")
     
     # Test with specified or default parameters
-    capture_success = takePhoto(output_dir='images', output_filename=output_filename, width=current_resolution[0], height=current_resolution[1])
+    capture_success = takePhoto(output_dir=output_dir, output_filename=output_filename, width=current_resolution[0], height=current_resolution[1])
     
     if capture_success:
         _log_camera_message("Test photo capture successful.", "SUCCESS")
