@@ -29,7 +29,7 @@ SYMBOL_STATUS = "→"
 SYMBOL_DEBUG = "•"
 
 def _log_camera_message(message, level="INFO"):
-    """Internal logger for camera.py with consistent styling."""
+    """Internal logger for camera.py with consistent styling matching main.py's OutputManager."""
     color = COLOR_RESET
     symbol = ""
 
@@ -48,14 +48,14 @@ def _log_camera_message(message, level="INFO"):
     elif level == "STATUS":
         color = COLOR_CYAN
         symbol = SYMBOL_STATUS
-    elif level == "DEBUG": # Added for completeness
+    elif level == "DEBUG":
         color = COLOR_GRAY
         symbol = SYMBOL_DEBUG
     
     # Add timestamp to match main.py format
     timestamp = datetime.now().strftime("%H:%M:%S") + " " 
     
-    # Use sys.stdout.write for consistency with main.py
+    # Print format exactly matching main.py OutputManager
     sys.stdout.write(f"{timestamp}{color}{symbol} {message}{COLOR_RESET}\n")
     sys.stdout.flush()
 
@@ -150,7 +150,7 @@ else:
 # Function to capture and format camera output
 def format_camera_output(func):
     """
-    Decorator to format camera output with emojis and remove timestamps.
+    Decorator to format camera output consistently with main.py style.
     """
     def wrapper(*args, **kwargs):
         # Capture stdout and stderr
@@ -165,7 +165,7 @@ def format_camera_output(func):
         stderr_output = stderr_buffer.getvalue()
         combined_output = stdout_output + stderr_output
         
-        # Filter and format the messages with emojis
+        # Filter and format the messages with consistent style
         if combined_output:
             lines = combined_output.strip().split('\n')
             for line in lines:
@@ -176,15 +176,18 @@ def format_camera_output(func):
                 # Format based on message type
                 if 'ERROR' in line or 'Error' in line:
                     pattern = r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+'
-                    print(f"❌ {re.sub(pattern, '', line)}")
+                    cleaned_line = re.sub(pattern, '', line)
+                    _log_camera_message(cleaned_line, "ERROR")
                 elif 'WARN' in line:
                     pattern = r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+'
-                    print(f"⚠️ {re.sub(pattern, '', line)}")
+                    cleaned_line = re.sub(pattern, '', line)
+                    _log_camera_message(cleaned_line, "WARNING")
                 elif 'INFO' in line:
                     pattern = r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+'
-                    print(f"ℹ️ {re.sub(pattern, '', line)}")
+                    cleaned_line = re.sub(pattern, '', line)
+                    _log_camera_message(cleaned_line, "INFO")
                 else:
-                    print(f"✓ {line}")
+                    _log_camera_message(line, "SUCCESS")
         
         return result
     
@@ -193,7 +196,7 @@ def format_camera_output(func):
 # Context manager version for inline usage
 class CameraOutputFormatter:
     """
-    Context manager to format camera output with emojis.
+    Context manager to format camera output consistently with main.py style.
     
     Usage example:
     with CameraOutputFormatter():
@@ -219,7 +222,7 @@ class CameraOutputFormatter:
         stderr_output = self.stderr_buffer.getvalue()
         combined_output = stdout_output + stderr_output
         
-        # Filter and format the messages with emojis
+        # Filter and format the messages with consistent style
         if combined_output:
             lines = combined_output.strip().split('\n')
             for line in lines:
@@ -230,15 +233,18 @@ class CameraOutputFormatter:
                 # Format based on message type
                 if 'ERROR' in line or 'Error' in line:
                     pattern = r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+'
-                    print(f"❌ {re.sub(pattern, '', line)}")
+                    cleaned_line = re.sub(pattern, '', line)
+                    _log_camera_message(cleaned_line, "ERROR")
                 elif 'WARN' in line:
                     pattern = r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+'
-                    print(f"⚠️ {re.sub(pattern, '', line)}")
+                    cleaned_line = re.sub(pattern, '', line)
+                    _log_camera_message(cleaned_line, "WARNING")
                 elif 'INFO' in line:
                     pattern = r'^\[\d+:\d+:\d+\.\d+\]\s+\[\d+\]\s+\w+\s+'
-                    print(f"ℹ️ {re.sub(pattern, '', line)}")
+                    cleaned_line = re.sub(pattern, '', line)
+                    _log_camera_message(cleaned_line, "INFO")
                 else:
-                    print(f"✓ {line}")
+                    _log_camera_message(line, "SUCCESS")
 
 # Function to validate and correct resolution
 def validate_resolution(width, height):
@@ -291,7 +297,7 @@ def takePhoto(output_dir='output', output_filename='input.png', width=1280, heig
         _log_camera_message("Not running on a Raspberry Pi. Photo capture skipped.", "INFO")
         return False
     if PI_CAMERA_VERSION is None:
-        _log_camera_message("PiCamera module not available. Cannot take photo.", "ERROR")
+        _log_camera_message("No PiCamera module available. Cannot take photo.", "ERROR")
         return False
 
     try:
@@ -314,8 +320,8 @@ def takePhoto(output_dir='output', output_filename='input.png', width=1280, heig
         return False
 
     capture_success = False
-    # Suppress verbose output from camera libraries during capture
-    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+    # Use stronger suppression for camera libraries
+    with suppress_stdout_stderr():
         try:
             if PI_CAMERA_VERSION == 2:
                 camera = Picamera2()

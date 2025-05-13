@@ -1203,13 +1203,14 @@ def main():
                 # Ensure output directory exists
                 os.makedirs(camera_output_dir, exist_ok=True)
                 
-                # Call takePhoto from the imported module
-                capture_success = camera_module.takePhoto(
-                    output_dir=camera_output_dir,
-                    output_filename=camera_output_filename,
-                    width=Config.Camera.WIDTH,  # Use width from Config
-                    height=Config.Camera.HEIGHT # Use height from Config
-                )
+                # Call takePhoto from the imported module with proper output suppression
+                with suppress_stdout_stderr():
+                    capture_success = camera_module.takePhoto(
+                        output_dir=camera_output_dir,
+                        output_filename=camera_output_filename,
+                        width=Config.Camera.WIDTH,  # Use width from Config
+                        height=Config.Camera.HEIGHT # Use height from Config
+                    )
                 
                 if capture_success:
                     OutputManager.log("Image captured successfully from camera.", "SUCCESS")
@@ -1478,7 +1479,7 @@ def main():
             
             # Get the model name from config and download if needed
             model_name = Config.Model.NAME
-            # OutputManager.log(f"Using model: {model_name}", "INFO") # Removed
+            OutputManager.log(f"Using model: {model_name}", "INFO")
             
             # Check if SSL verification should be disabled
             disable_ssl = False
