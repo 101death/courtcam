@@ -1358,18 +1358,53 @@ def main(use_gui_courts=False):
     
     # Initialize multiprocessing if enabled
     if Config.MultiProcessing.ENABLED:
-        # Set the number of processes if not already set
         if Config.MultiProcessing.NUM_PROCESSES <= 0:
-            # Use 3 processes or the number of CPU cores if less than 3
             Config.MultiProcessing.NUM_PROCESSES = min(3, cpu_count())
-        
+
         OutputManager.log(f"Multiprocessing enabled with {Config.MultiProcessing.NUM_PROCESSES} processes", "INFO")
-    
+
     try:
+        input_path = Config.Paths.input_path()  # Default input path
+
+        if use_gui_courts:
+            # GUI mode skips camera capture and court/people detection
+            OutputManager.status("Loading image")
+            if input_path == Config.Paths.input_path():
+                try:
+                    os.makedirs(os.path.dirname(input_path), exist_ok=True)
+                    OutputManager.log(f"Created images directory at {os.path.dirname(input_path)}", "INFO")
+                except Exception as e:
+                    OutputManager.log(f"Cannot create images directory: {str(e)}", "ERROR")
+
+            image = cv2.imread(input_path)
+            if image is None:
+                OutputManager.log(f"Unable to open the image at {input_path}", "ERROR")
+                return 1
+
+            OutputManager.log(
+                "Launching GUI to select court positions. Press 'q' when finished", "INFO"
+            )
+            selected = select_court_positions_gui(image, Config.COURT_POSITIONS)
+            if selected:
+                Config.COURT_POSITIONS = [tuple(int(v) for v in b) for b in selected]
+                try:
+                    existing_cfg = {}
+                    if os.path.exists(CONFIG_FILE):
+                        with open(CONFIG_FILE, "r") as f:
+                            existing_cfg = json.load(f)
+                    existing_cfg["CourtPositions"] = Config.COURT_POSITIONS
+                    json_text = json.dumps(existing_cfg, indent=4)
+                    with open(CONFIG_FILE, "w") as f:
+                        f.write(json_text)
+                    OutputManager.log("Court positions saved via GUI", "DEBUG")
+                except Exception as e:
+                    OutputManager.log(f"Couldn't save court positions: {str(e)}", "WARNING")
+            else:
+                OutputManager.log("No courts selected in GUI", "WARNING")
+            return 0
+
         # === Camera Logic ===
-        input_path = Config.Paths.input_path() # Default input path, will be overridden by camera unless --no-camera
-        
-        if not args.no_camera: # Attempt camera capture by default
+        if not args.no_camera:  # Attempt camera capture by default
             camera_output_dir = "output"
             camera_output_filename = "input.png"
             camera_output_path = os.path.join(camera_output_dir, camera_output_filename)
@@ -1462,30 +1497,6 @@ def main(use_gui_courts=False):
             debug_folder = None  # Set to None to prevent further debug saves
             # Continue execution even if debug folder can't be created
 
-        if use_gui_courts:
-            OutputManager.log(
-                "Launching GUI to select court positions. Press 'q' when finished",
-                "INFO",
-            )
-            selected = select_court_positions_gui(image, Config.COURT_POSITIONS)
-            if selected:
-                Config.COURT_POSITIONS = [tuple(int(v) for v in b) for b in selected]
-                try:
-                    with open(CONFIG_FILE, 'r') as f:
-                        cfg = json.load(f)
-                except Exception:
-                    cfg = {}
-                cfg['CourtPositions'] = Config.COURT_POSITIONS
-                try:
-                    json_text = json.dumps(cfg, indent=4)
-                    with open(CONFIG_FILE, 'w') as f:
-                        f.write(json_text)
-                    OutputManager.log("Court positions saved via GUI", "DEBUG")
-                except Exception as e:
-                    OutputManager.log(f"Couldn't save court positions: {str(e)}", "WARNING")
-            else:
-                OutputManager.log("No courts selected in GUI", "WARNING")
-        
         # Detect tennis courts
         t_start_court = time.time() # Start timing for court detection
 

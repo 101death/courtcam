@@ -164,7 +164,9 @@ python main.py [options]
 - `--set-courts-gui`: Open an editing window with a half-width sidebar. Click a
   court in the list to adjust its corners on the image. Drag points to move
   them, use the `+` button to add another court, or the `-` button to delete the
-  selected one (up to four courts).
+  selected one (up to four courts). When this flag is used by itself, the
+  program loads the input image without capturing from the camera and exits
+  after saving the positions.
 
 When court positions are provided or saved in `config.json`, court detection is skipped on subsequent runs.
 
