@@ -1319,11 +1319,11 @@ def main():
                 # Show final summary with error and exit
                 processing_time = time.time() - start_time
                 final_summary = OutputManager.create_final_summary(
-                    people_count=None, 
-                    court_counts={}, 
+                    people_count=None,
+                    total_courts=0,
                     output_path=None,
                     processing_time=processing_time,
-                    total_courts=0
+                    detailed_court_counts={}
                 )
                 print_error_summary(final_summary)
                 return 1
@@ -1331,11 +1331,11 @@ def main():
             OutputManager.log(f"Problem loading the image: {str(e)}", "ERROR")
             processing_time = time.time() - start_time
             final_summary = OutputManager.create_final_summary(
-                people_count=None, 
-                court_counts={}, 
+                people_count=None,
+                total_courts=0,
                 output_path=None,
                 processing_time=processing_time,
-                total_courts=0
+                detailed_court_counts={}
             )
             print_error_summary(final_summary)
             return 1
@@ -1384,11 +1384,12 @@ def main():
             OutputManager.log("Using saved court positions from config", "INFO")
             height, width = image.shape[:2]
             court_numbers_mask = np.zeros((height, width), dtype=np.uint8)
+            court_mask = np.zeros((height, width), dtype=np.uint8)
             courts = []
             for idx, bbox in enumerate(Config.COURT_POSITIONS):
-                # Ensure all values are integers
                 x, y, w, h = [int(v) for v in bbox]
                 cv2.rectangle(court_numbers_mask, (x, y), (x + w, y + h), idx + 1, -1)
+                cv2.rectangle(court_mask, (x, y), (x + w, y + h), 255, -1)
                 approx = np.array([[[x, y]], [[x + w, y]], [[x + w, y + h]], [[x, y + h]]], dtype=np.int32)
                 courts.append({
                     'court_number': idx + 1,
@@ -1405,7 +1406,11 @@ def main():
                     'blue_pixels': w * h,
                     'green_pixels': 0
                 })
+            blue_mask_raw = np.zeros((height, width), dtype=np.uint8)
+            green_mask = np.zeros((height, width), dtype=np.uint8)
             court_mask_viz = np.zeros((height, width, 3), dtype=np.uint8)
+            court_mask_viz[court_mask > 0] = [255, 127, 0]
+            valid_regions = len(courts)
             duration_court_detection = 0.0
         else:
             try:
@@ -1500,27 +1505,25 @@ def main():
             OutputManager.log(f"Error creating court visualization: {str(e)}", "WARNING")
             court_mask_viz = image.copy()  # Use original image as fallback
         
-        # Assign court numbers to each separate blue region
-        try:
-            # OutputManager.status("Identifying courts") # Removed
-            court_numbers_mask, courts = assign_court_numbers(court_mask)
-            
-            # Output appropriate message based on court detection
-            if len(courts) == 0:
-                OutputManager.log("No tennis courts found in the image", "WARNING")
-            else:
-                OutputManager.log(f"Found {len(courts)} tennis court{'s' if len(courts) > 1 else ''}", "SUCCESS")
-                if Config.Output.EXTRA_VERBOSE:
-                    # Log details of each court
-                    for i, court in enumerate(courts):
-                        cx, cy = court['centroid']
-                        area = court['area']
-                        OutputManager.log(f"Court {i+1}: center=({int(cx)}, {int(cy)}), area={area:.1f} pixels", "DEBUG")
-        except Exception as e:
-            OutputManager.log(f"Error identifying courts: {str(e)}", "ERROR")
-            # Create fallback empty data
-            courts = []
-            court_numbers_mask = np.zeros_like(court_mask)
+        # Assign court numbers to each separate blue region if not preloaded
+        if not Config.COURT_POSITIONS:
+            try:
+                court_numbers_mask, courts = assign_court_numbers(court_mask)
+
+                # Output appropriate message based on court detection
+                if len(courts) == 0:
+                    OutputManager.log("No tennis courts found in the image", "WARNING")
+                else:
+                    OutputManager.log(f"Found {len(courts)} tennis court{'s' if len(courts) > 1 else ''}", "SUCCESS")
+                    if Config.Output.EXTRA_VERBOSE:
+                        for i, court in enumerate(courts):
+                            cx, cy = court['centroid']
+                            area = court['area']
+                            OutputManager.log(f"Court {i+1}: center=({int(cx)}, {int(cy)}), area={area:.1f} pixels", "DEBUG")
+            except Exception as e:
+                OutputManager.log(f"Error identifying courts: {str(e)}", "ERROR")
+                courts = []
+                court_numbers_mask = np.zeros_like(court_mask)
 
         if not Config.COURT_POSITIONS and courts:
             # Convert numpy integers to plain Python ints for JSON serialization
@@ -1707,7 +1710,13 @@ def main():
                     OutputManager.log(f"Error loading model {Config.Model.NAME}: {str(e)}", "ERROR")
                     # Attempt to create a summary and exit
                     processing_time = time.time() - start_time
-                    final_summary_str = OutputManager.create_final_summary(None, {}, None, processing_time, len(courts) if 'courts' in locals() else 0)
+                    final_summary_str = OutputManager.create_final_summary(
+                        people_count=None,
+                        total_courts=len(courts) if 'courts' in locals() else 0,
+                        output_path=None,
+                        processing_time=processing_time,
+                        detailed_court_counts={}
+                    )
                     OutputManager.fancy_summary("ERROR SUMMARY", final_summary_str, processing_time=processing_time, is_error=True)
                     return 1 # Exit due to model load failure
             
@@ -2049,11 +2058,11 @@ def main():
         # Create a basic summary with the error
         processing_time = time.time() - start_time
         final_summary = OutputManager.create_final_summary(
-            people_count=None, 
-            court_counts={}, 
+            people_count=None,
+            total_courts=0,
             output_path=None,
             processing_time=processing_time,
-            total_courts=0
+            detailed_court_counts={}
         )
         print_error_summary(final_summary)
         return 1
