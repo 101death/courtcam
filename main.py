@@ -8,6 +8,7 @@ import numpy as np # type: ignore
 import json
 import torch # type: ignore
 from shapely.geometry import Polygon, Point # type: ignore
+from typing import List, Tuple
 import sys
 import ssl
 import argparse
@@ -702,41 +703,92 @@ def parse_court_positions_arg(arg):
 
 
 def select_court_positions_gui(image, max_courts=4):
-    """Interactively select court positions by clicking four corners."""
+    """Advanced GUI to select court positions with a sidebar."""
+    height, width = image.shape[:2]
+    sidebar_w = 120
     window = "Select Courts"
-    temp_img = image.copy()
-    positions = []
-    points = []
 
-    cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+    display = np.zeros((height, width + sidebar_w, 3), dtype=np.uint8)
+    display[:, :width] = image.copy()
+
+    positions: List[Tuple[int, int, int, int]] = []
+    points: List[Tuple[int, int]] = []
+
+    def draw_sidebar():
+        # Clear sidebar
+        display[:, width:] = (40, 40, 40)
+        # Plus sign button
+        cx = width + sidebar_w // 2
+        cy = 40
+        cv2.line(display, (cx - 15, cy), (cx + 15, cy), (255, 255, 255), 2)
+        cv2.line(display, (cx, cy - 15), (cx, cy + 15), (255, 255, 255), 2)
+        cv2.putText(
+            display,
+            f"Add Court {len(positions) + 1}",
+            (width + 10, cy + 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 255, 255),
+            1,
+        )
+        cv2.putText(
+            display,
+            "Press q when done",
+            (width + 10, height - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 255, 255),
+            1,
+        )
+
+    draw_sidebar()
+
+    plus_rect = (width + sidebar_w // 2 - 20, 20, 40, 40)
+
+    def finalize_current():
+        nonlocal points
+        if not points:
+            return
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        bbox = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+        positions.append(bbox)
+        cv2.rectangle(
+            display,
+            (bbox[0], bbox[1]),
+            (bbox[0] + bbox[2], bbox[1] + bbox[3]),
+            (0, 255, 0),
+            2,
+        )
+        points = []
+        draw_sidebar()
 
     def mouse(event, x, y, flags, param):
-        nonlocal temp_img, positions, points
-        if event == cv2.EVENT_LBUTTONDOWN:
+        nonlocal points
+        if event != cv2.EVENT_LBUTTONDOWN:
+            return
+        if x >= width:
+            # Click in sidebar
+            if (
+                plus_rect[0] <= x <= plus_rect[0] + plus_rect[2]
+                and plus_rect[1] <= y <= plus_rect[1] + plus_rect[3]
+            ):
+                finalize_current()
+        else:
             points.append((x, y))
-            cv2.circle(temp_img, (x, y), 4, (0, 0, 255), -1)
-            cv2.imshow(window, temp_img)
-            if len(points) == 4:
-                xs = [p[0] for p in points]
-                ys = [p[1] for p in points]
-                bbox = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
-                positions.append(bbox)
-                cv2.rectangle(
-                    temp_img,
-                    (bbox[0], bbox[1]),
-                    (bbox[0] + bbox[2], bbox[1] + bbox[3]),
-                    (0, 255, 0),
-                    2,
-                )
-                cv2.imshow(window, temp_img)
-                points = []
+            cv2.circle(display, (x, y), 3, (0, 0, 255), -1)
 
+    cv2.namedWindow(window, cv2.WINDOW_NORMAL)
     cv2.setMouseCallback(window, mouse)
 
     while True:
-        cv2.imshow(window, temp_img)
+        cv2.imshow(window, display)
         key = cv2.waitKey(1) & 0xFF
-        if key in (ord("q"), 27) or len(positions) >= max_courts:
+        if key in (ord("q"), 27):
+            finalize_current()
+            break
+        if len(positions) >= max_courts:
+            finalize_current()
             break
 
     cv2.destroyWindow(window)
