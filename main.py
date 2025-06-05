@@ -685,6 +685,21 @@ else:
     OutputManager.log(f"{CONFIG_FILE} not found. Using default class values.", "DEBUG")
 # === End Load Configuration ===
 
+def parse_court_positions_arg(arg):
+    """Parse --court-positions argument into a list of (x, y, w, h) tuples."""
+    positions = []
+    for part in arg.split(';'):
+        part = part.strip()
+        if not part:
+            continue
+        nums = [int(n) for n in part.split(',')]
+        if len(nums) != 4:
+            raise ValueError(f"Invalid court position: '{part}'")
+        positions.append(tuple(nums))
+    if not positions:
+        raise ValueError("No valid court positions provided")
+    return positions
+
 def create_blue_mask(image):
     """Create a mask for blue areas in the image"""
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -2408,6 +2423,11 @@ if __name__ == "__main__":
         parser.add_argument("--processes", type=int, help="Number of processes to use for multiprocessing", default=Config.MultiProcessing.NUM_PROCESSES)
         parser.add_argument("--extra-verbose", action="store_true", help="Show extra detailed output for debugging")
         parser.add_argument("--force-macos-cert-install", action="store_true", help="Force macOS certificate installation")
+        parser.add_argument(
+            "--court-positions",
+            type=str,
+            help="Set court positions manually as 'x,y,w,h;x,y,w,h'"
+        )
         # Add new arguments for merged functionality
         parser.add_argument("--install-ultralytics", action="store_true", help="Install the ultralytics package")
         parser.add_argument("--test-yolo", action="store_true", help="Run YOLO model test on the input image")
@@ -2489,9 +2509,33 @@ if __name__ == "__main__":
             if args.processes > 0:
                 Config.MultiProcessing.NUM_PROCESSES = args.processes
             
+
             # Update extra verbose setting
             if args.extra_verbose:
                 Config.Output.EXTRA_VERBOSE = True
+
+            # Manually set court positions from command line
+            if args.court_positions:
+                try:
+                    Config.COURT_POSITIONS = parse_court_positions_arg(args.court_positions)
+
+                    existing_cfg = {}
+                    if os.path.exists(CONFIG_FILE):
+                        try:
+                            with open(CONFIG_FILE, 'r') as f:
+                                existing_cfg = json.load(f)
+                        except Exception:
+                            existing_cfg = {}
+
+                    existing_cfg['CourtPositions'] = Config.COURT_POSITIONS
+
+                    json_text = json.dumps(existing_cfg, indent=4)
+                    with open(CONFIG_FILE, 'w') as f:
+                        f.write(json_text)
+                    OutputManager.log("Court positions set via command line", "DEBUG")
+                except Exception as e:
+                    OutputManager.log(f"Invalid --court-positions: {str(e)}", "ERROR")
+                    sys.exit(1)
             
             # Handle test mode
             if args.test_mode:

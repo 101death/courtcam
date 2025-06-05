@@ -160,6 +160,9 @@ python main.py [options]
 - `--quiet`: Reduce console output
 - `--show-labels`: Show detailed labels on output image
 - `--processes NUM`: Set number of processes for multiprocessing
+- `--court-positions LIST`: Manually set court bounding boxes as `x,y,w,h` pairs separated by semicolons
+
+When court positions are provided or saved in `config.json`, court detection is skipped on subsequent runs.
 
 ### Performance Testing
 
