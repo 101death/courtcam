@@ -161,12 +161,10 @@ python main.py [options]
 - `--show-labels`: Show detailed labels on output image
 - `--processes NUM`: Set number of processes for multiprocessing
 - `--court-positions LIST`: Manually set court bounding boxes as `x,y,w,h` pairs separated by semicolons
-- `--set-courts-gui`: Open an editing window with a half-width sidebar. Click a
-  court in the list to adjust its corners on the image. Drag points to move
-  them, use the `+` button to add another court, or the `-` button to delete the
-  selected one (up to four courts). When this flag is used by itself, the
-  program loads the input image without capturing from the camera and exits
-  after saving the positions.
+- `--set-courts-gui`: Launch an interactive editor with a sidebar. Click `+` to
+  start marking a new court and place as many points as needed. Hit `Done` to
+  save the polygon, `-` to delete the selected court and `Finish` (or `q`) to
+  exit. The program loads the image and closes after saving the positions.
 
 When court positions are provided or saved in `config.json`, court detection is skipped on subsequent runs.
 

@@ -76,5 +76,7 @@
     "# MAX_ASPECT_RATIO": "Maximum width/height ratio for court",
     "MAX_ASPECT_RATIO": 4.0
   },
-  "CourtPositions": []
+  "CourtPositions": [
+    [0, 0, 0, 0]
+  ]
 }
