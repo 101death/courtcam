@@ -741,6 +741,22 @@ def select_court_positions_gui(image, existing=None, max_courts=4):
     sidebar = tk.Frame(root, bg="#333")
     sidebar.pack(side=tk.RIGHT, fill=tk.Y)
 
+    instructions = (
+        "Click '+' to start a new court and "
+        "mark corners with the mouse. Use 'Done' "
+        "to close the current court or 'Finish' "
+        "when all courts are added."
+    )
+    instr_label = tk.Label(
+        sidebar,
+        text=instructions,
+        wraplength=140,
+        justify=tk.LEFT,
+        bg="#333",
+        fg="white",
+    )
+    instr_label.pack(padx=5, pady=(5, 0))
+
     listbox = tk.Listbox(sidebar, bg="#222", fg="white", highlightthickness=0)
     listbox.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
 
