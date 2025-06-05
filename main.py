@@ -9,6 +9,8 @@ import json
 import torch # type: ignore
 from shapely.geometry import Polygon, Point # type: ignore
 from typing import List, Tuple
+import tkinter as tk
+from PIL import Image, ImageTk
 import sys
 import ssl
 import argparse
@@ -713,172 +715,131 @@ def court_positions_defined() -> bool:
 
 
 def select_court_positions_gui(image, existing=None, max_courts=4):
-    """Interactive GUI to add or edit court polygons via sidebar."""
+    """Tkinter-based GUI to select court polygons with animated buttons."""
     height, width = image.shape[:2]
-    sidebar_w = width // 2
-    window = "Edit Courts"
 
-    display = np.zeros((height, width + sidebar_w, 3), dtype=np.uint8)
-    base_image = image.copy()
+    img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(img_rgb)
 
-    def bbox_to_points(b):
-        x, y, w, h = b
-        return [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+    root = tk.Tk()
+    root.title("Edit Courts")
 
-    courts: List[List[Tuple[int, int]]] = (
-        [bbox_to_points(b) for b in existing] if existing else []
-    )
-    selected = 0 if courts else None
-    add_points: List[Tuple[int, int]] = []
-    dragging = None
-    mode = "idle"  # idle, adding, dragging
-    finished = False
+    canvas = tk.Canvas(root, width=width, height=height)
+    canvas.pack(side=tk.LEFT)
+    tk_img = ImageTk.PhotoImage(pil_img)
+    canvas.create_image(0, 0, anchor="nw", image=tk_img)
 
-    court_rects: List[Tuple[int, int, int, int]] = []
-    plus_rect = (width + sidebar_w // 2 - 25, 20, 50, 30)
-    del_rect = (width + sidebar_w // 2 - 25, 60, 50, 30)
-    done_rect = (width + sidebar_w // 2 - 40, 100, 80, 30)
-    finish_rect = (width + sidebar_w // 2 - 40, height - 50, 80, 30)
+    sidebar = tk.Frame(root, bg="#333")
+    sidebar.pack(side=tk.RIGHT, fill=tk.Y)
 
-    def draw_sidebar():
-        nonlocal court_rects
-        display[:, width:] = (50, 50, 50)
-        # Buttons
-        cv2.rectangle(display, (plus_rect[0], plus_rect[1]),
-                      (plus_rect[0] + plus_rect[2], plus_rect[1] + plus_rect[3]),
-                      (90, 90, 90), -1)
-        cv2.rectangle(display, (del_rect[0], del_rect[1]),
-                      (del_rect[0] + del_rect[2], del_rect[1] + del_rect[3]),
-                      (90, 90, 90), -1)
-        if mode == "adding":
-            cv2.rectangle(display, (done_rect[0], done_rect[1]),
-                          (done_rect[0] + done_rect[2], done_rect[1] + done_rect[3]),
-                          (90, 90, 90), -1)
-            cv2.putText(display, "Done", (done_rect[0] + 5, done_rect[1] + 22),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-        cv2.rectangle(display, (finish_rect[0], finish_rect[1]),
-                      (finish_rect[0] + finish_rect[2], finish_rect[1] + finish_rect[3]),
-                      (90, 90, 90), -1)
-        cv2.putText(display, "+", (plus_rect[0] + 15, plus_rect[1] + 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(display, "-", (del_rect[0] + 18, del_rect[1] + 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(display, "Finish", (finish_rect[0] + 5, finish_rect[1] + 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+    listbox = tk.Listbox(sidebar, bg="#222", fg="white", highlightthickness=0)
+    listbox.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
 
-        court_rects = []
-        start_y = 110
-        for idx in range(len(courts)):
-            rect = (width + 10, start_y + idx * 40 - 20, sidebar_w - 20, 35)
-            court_rects.append(rect)
-            color = (0, 128, 255) if idx == selected else (80, 80, 80)
-            cv2.rectangle(display, (rect[0], rect[1]),
-                          (rect[0] + rect[2], rect[1] + rect[3]), color, -1)
-            cv2.putText(display, f"Court {idx + 1}", (rect[0] + 5, rect[1] + 23),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+    btn_frame = tk.Frame(sidebar, bg="#333")
+    btn_frame.pack(pady=10)
 
-        cv2.putText(display, "Press Finish or q", (width + 10, height - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    def style_button(btn):
+        btn.configure(bg="#444", fg="white", relief=tk.FLAT, activebackground="#555")
+        btn.bind("<Enter>", lambda e: btn.configure(bg="#555"))
+        btn.bind("<Leave>", lambda e: btn.configure(bg="#444"))
 
-    def draw_main():
-        display[:, :width] = base_image.copy()
-        if selected is not None and selected < len(courts):
-            pts = courts[selected]
-            for i in range(len(pts)):
-                p1 = pts[i]
-                p2 = pts[(i + 1) % len(pts)]
-                cv2.line(display, p1, p2, (0, 255, 0), 2)
-                cv2.circle(display, p1, 5, (0, 0, 255), -1)
-        if mode == "adding":
-            for p in add_points:
-                cv2.circle(display, p, 4, (255, 0, 0), -1)
-            if len(add_points) > 1:
-                for i in range(len(add_points) - 1):
-                    cv2.line(display, add_points[i], add_points[i + 1],
-                             (255, 0, 0), 1)
+    add_btn = tk.Button(btn_frame, text="+", width=4)
+    del_btn = tk.Button(btn_frame, text="-", width=4)
+    done_btn = tk.Button(btn_frame, text="Done", width=6)
+    finish_btn = tk.Button(btn_frame, text="Finish", width=6)
 
-    def redraw():
-        draw_main()
-        draw_sidebar()
+    for b in (add_btn, del_btn, done_btn, finish_btn):
+        style_button(b)
+        b.pack(pady=2)
 
-    redraw()
+    courts: List[List[Tuple[int, int]]] = []
+    if existing:
+        for bbox in existing:
+            x, y, w, h = bbox
+            pts = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+            courts.append(pts)
+            listbox.insert(tk.END, f"Court {len(courts)}")
+            canvas.create_polygon(pts, outline="green", fill="", width=2, tags=f"court{len(courts)-1}")
 
-    def mouse(event, x, y, flags, param):
-        nonlocal selected, add_points, dragging, mode
-        if x >= width:
-            if event == cv2.EVENT_LBUTTONDOWN:
-                if (finish_rect[0] <= x <= finish_rect[0] + finish_rect[2] and
-                        finish_rect[1] <= y <= finish_rect[1] + finish_rect[3]):
-                    finished = True
-                elif (mode == "adding" and done_rect[0] <= x <= done_rect[0] + done_rect[2] and
-                        done_rect[1] <= y <= done_rect[1] + done_rect[3]):
-                    if len(add_points) >= 3:
-                        courts.append(add_points.copy())
-                        selected = len(courts) - 1
-                    add_points = []
-                    mode = "idle"
-                    redraw()
-                elif (plus_rect[0] <= x <= plus_rect[0] + plus_rect[2] and
-                        plus_rect[1] <= y <= plus_rect[1] + plus_rect[3] and
-                        len(courts) < max_courts):
-                    mode = "adding"
-                    add_points = []
-                    selected = None
-                elif (del_rect[0] <= x <= del_rect[0] + del_rect[2] and
-                        del_rect[1] <= y <= del_rect[1] + del_rect[3] and
-                        selected is not None):
-                    courts.pop(selected)
-                    if courts:
-                        selected = min(selected, len(courts) - 1)
-                    else:
-                        selected = None
-                    redraw()
-                else:
-                    for idx, rect in enumerate(court_rects):
-                        if rect[0] <= x <= rect[0] + rect[2] and rect[1] <= y <= rect[1] + rect[3]:
-                            selected = idx
-                            redraw()
-                            break
+    mode = "idle"
+    curr_pts: List[Tuple[int, int]] = []
+    curr_drawn = []
+
+    def redraw_current():
+        for item in curr_drawn:
+            canvas.delete(item)
+        curr_drawn.clear()
+        if curr_pts:
+            for p in curr_pts:
+                curr_drawn.append(canvas.create_oval(p[0]-3, p[1]-3, p[0]+3, p[1]+3, fill="red", outline=""))
+            if len(curr_pts) > 1:
+                for i in range(len(curr_pts)-1):
+                    curr_drawn.append(canvas.create_line(curr_pts[i], curr_pts[i+1], fill="red"))
+
+    def on_canvas_click(event):
+        nonlocal mode, curr_pts
+        if mode != "adding":
             return
+        p = (event.x, event.y)
+        curr_pts.append(p)
+        if len(curr_pts) > 2:
+            first = curr_pts[0]
+            if (first[0]-p[0])**2 + (first[1]-p[1])**2 < 100:
+                done_current()
+                return
+        redraw_current()
 
-        if mode == "adding":
-            if event == cv2.EVENT_LBUTTONDOWN:
-                add_points.append((x, y))
-                redraw()
-        elif selected is not None and selected < len(courts):
-            if event == cv2.EVENT_LBUTTONDOWN:
-                for i, p in enumerate(courts[selected]):
-                    if (x - p[0]) ** 2 + (y - p[1]) ** 2 <= 100:
-                        dragging = i
-                        mode = "dragging"
-                        break
-            elif event == cv2.EVENT_MOUSEMOVE and dragging is not None:
-                courts[selected][dragging] = (max(0, min(x, width - 1)),
-                                              max(0, min(y, height - 1)))
-                redraw()
-            elif event == cv2.EVENT_LBUTTONUP and dragging is not None:
-                courts[selected][dragging] = (max(0, min(x, width - 1)),
-                                              max(0, min(y, height - 1)))
-                dragging = None
-                mode = "idle"
-                redraw()
+    canvas.bind("<Button-1>", on_canvas_click)
 
-    cv2.namedWindow(window, cv2.WINDOW_NORMAL)
-    cv2.setMouseCallback(window, mouse)
+    def refresh_listbox():
+        listbox.delete(0, tk.END)
+        for i in range(len(courts)):
+            listbox.insert(tk.END, f"Court {i+1}")
 
-    while not finished:
-        cv2.imshow(window, display)
-        key = cv2.waitKey(20) & 0xFF
-        if key in (ord("q"), 27):
-            break
+    def done_current():
+        nonlocal mode, curr_pts
+        if len(curr_pts) >= 3:
+            courts.append(curr_pts.copy())
+            canvas.create_polygon(curr_pts, outline="green", fill="", width=2, tags=f"court{len(courts)-1}")
+            refresh_listbox()
+        curr_pts = []
+        redraw_current()
+        mode = "idle"
 
-    cv2.destroyWindow(window)
-    # Convert points back to bounding boxes
+    def start_add():
+        nonlocal mode, curr_pts
+        if len(courts) >= max_courts:
+            return
+        mode = "adding"
+        curr_pts = []
+        redraw_current()
+
+    def delete_selected():
+        sel = listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        courts.pop(idx)
+        canvas.delete(f"court{idx}")
+        for i in range(idx, len(courts)):
+            canvas.itemconfigure(f"court{i+1}", tags=f"court{i}")
+        refresh_listbox()
+
+    def finish():
+        root.destroy()
+
+    add_btn.configure(command=start_add)
+    del_btn.configure(command=delete_selected)
+    done_btn.configure(command=done_current)
+    finish_btn.configure(command=finish)
+
+    root.mainloop()
+
     bboxes: List[Tuple[int, int, int, int]] = []
     for pts in courts:
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
-        bboxes.append((min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)))
+        bboxes.append((min(xs), min(ys), max(xs)-min(xs), max(ys)-min(ys)))
     return bboxes
 
 def create_blue_mask(image):
