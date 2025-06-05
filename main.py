@@ -764,9 +764,18 @@ def select_court_positions_gui(image, existing=None, max_courts=4):
     btn_frame.pack(pady=10)
 
     def style_button(btn):
-        btn.configure(bg="#444", fg="white", relief=tk.FLAT, activebackground="#555")
-        btn.bind("<Enter>", lambda e: btn.configure(bg="#555"))
-        btn.bind("<Leave>", lambda e: btn.configure(bg="#444"))
+        """Style sidebar buttons so they remain readable"""
+        btn.configure(
+            bg="#e0e0e0",
+            fg="black",
+            activebackground="#c0c0c0",
+            activeforeground="black",
+            relief=tk.FLAT,
+            bd=1,
+            highlightthickness=0,
+        )
+        btn.bind("<Enter>", lambda e: btn.configure(bg="#d0d0d0"))
+        btn.bind("<Leave>", lambda e: btn.configure(bg="#e0e0e0"))
 
     add_btn = tk.Button(btn_frame, text="+", width=4)
     del_btn = tk.Button(btn_frame, text="-", width=4)
