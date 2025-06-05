@@ -668,7 +668,10 @@ if os.path.exists(CONFIG_FILE):
 
             # Pre-detected court positions
             if 'CourtPositions' in _loaded_config:
-                Config.COURT_POSITIONS = _loaded_config.get('CourtPositions', [])
+                Config.COURT_POSITIONS = [
+                    tuple(int(v) for v in bbox)
+                    for bbox in _loaded_config.get('CourtPositions', [])
+                ]
 
             # Configure OutputManager AFTER loading config
             OutputManager.configure(_loaded_config)
@@ -1302,7 +1305,8 @@ def main():
             court_numbers_mask = np.zeros((height, width), dtype=np.uint8)
             courts = []
             for idx, bbox in enumerate(Config.COURT_POSITIONS):
-                x, y, w, h = bbox
+                # Ensure all values are integers
+                x, y, w, h = [int(v) for v in bbox]
                 cv2.rectangle(court_numbers_mask, (x, y), (x + w, y + h), idx + 1, -1)
                 approx = np.array([[[x, y]], [[x + w, y]], [[x + w, y + h]], [[x, y + h]]], dtype=np.int32)
                 courts.append({
@@ -1438,16 +1442,22 @@ def main():
             court_numbers_mask = np.zeros_like(court_mask)
 
         if not Config.COURT_POSITIONS and courts:
-            Config.COURT_POSITIONS = [c['bbox'] for c in courts]
+            # Convert numpy integers to plain Python ints for JSON serialization
+            Config.COURT_POSITIONS = [tuple(int(v) for v in c['bbox']) for c in courts]
+
             try:
                 with open(CONFIG_FILE, 'r') as f:
                     cfg = json.load(f)
             except Exception:
                 cfg = {}
+
             cfg['CourtPositions'] = Config.COURT_POSITIONS
+
+            # Serialize to a string first to avoid corrupting the file if it fails
             try:
+                json_text = json.dumps(cfg, indent=4)
                 with open(CONFIG_FILE, 'w') as f:
-                    json.dump(cfg, f, indent=4)
+                    f.write(json_text)
                 OutputManager.log("Saved court positions to config", "DEBUG")
             except Exception as e:
                 OutputManager.log(f"Couldn't save court positions: {str(e)}", "WARNING")
