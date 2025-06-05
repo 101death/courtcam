@@ -1235,7 +1235,7 @@ def detect_people_ultralytics(model, image, confidence=0.25):
     #     OutputManager.log("No people detected with ultralytics API", "INFO")
         
     return people
-def main():
+def main(use_gui_courts=False):
     """Main function optimized for Raspberry Pi Zero"""
     # Start timer
     start_time = time.time()
@@ -1353,7 +1353,7 @@ def main():
             debug_folder = None  # Set to None to prevent further debug saves
             # Continue execution even if debug folder can't be created
 
-        if 'use_gui_courts' in locals() and use_gui_courts:
+        if use_gui_courts:
             OutputManager.log(
                 "Launching GUI to select court positions. Press 'q' when finished",
                 "INFO",
@@ -2715,7 +2715,7 @@ if __name__ == "__main__":
                         else:
                             args.device = "cpu"
                         print(f"\nRunning with best configuration...")
-                        sys.exit(main())
+                        sys.exit(main(use_gui_courts))
                     else:
                         print("Exiting.")
                         sys.exit(0)
@@ -2723,7 +2723,7 @@ if __name__ == "__main__":
                     print("Exiting.")
                     sys.exit(0)
             
-            sys.exit(main())
+            sys.exit(main(use_gui_courts))
         except Exception as e:
             print(f"\nError setting up configuration: {str(e)}")
             sys.exit(1)
