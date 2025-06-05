@@ -165,7 +165,9 @@ python main.py [options]
   to add or remove courts. Points are placed by clicking on the image and the
   shape automatically closes when the final click is near the first. Buttons
   include simple hover animations and `Done`/`Finish` complete the selection.
-  The program loads the image and exits after saving the positions.
+  The program loads the image and exits after saving the positions. The editor
+  scales the image to fit within an 800x600 window so the whole frame is
+  visible even on smaller screens.
 
 When court positions are provided or saved in `config.json`, court detection is skipped on subsequent runs.
 

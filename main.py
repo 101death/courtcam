@@ -718,13 +718,22 @@ def select_court_positions_gui(image, existing=None, max_courts=4):
     """Tkinter-based GUI to select court polygons with animated buttons."""
     height, width = image.shape[:2]
 
-    img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    # Resize image to fit within 800x600 while preserving aspect ratio
+    max_w, max_h = 800, 600
+    scale = min(max_w / width, max_h / height, 1.0)
+    disp_w, disp_h = int(width * scale), int(height * scale)
+    if scale != 1.0:
+        resized = cv2.resize(image, (disp_w, disp_h), interpolation=cv2.INTER_AREA)
+    else:
+        resized = image
+
+    img_rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
     pil_img = Image.fromarray(img_rgb)
 
     root = tk.Tk()
     root.title("Edit Courts")
 
-    canvas = tk.Canvas(root, width=width, height=height)
+    canvas = tk.Canvas(root, width=disp_w, height=disp_h)
     canvas.pack(side=tk.LEFT)
     tk_img = ImageTk.PhotoImage(pil_img)
     canvas.create_image(0, 0, anchor="nw", image=tk_img)
@@ -756,7 +765,12 @@ def select_court_positions_gui(image, existing=None, max_courts=4):
     if existing:
         for bbox in existing:
             x, y, w, h = bbox
-            pts = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+            pts = [
+                (int(x * scale), int(y * scale)),
+                (int((x + w) * scale), int(y * scale)),
+                (int((x + w) * scale), int((y + h) * scale)),
+                (int(x * scale), int((y + h) * scale)),
+            ]
             courts.append(pts)
             listbox.insert(tk.END, f"Court {len(courts)}")
             canvas.create_polygon(pts, outline="green", fill="", width=2, tags=f"court{len(courts)-1}")
@@ -839,7 +853,16 @@ def select_court_positions_gui(image, existing=None, max_courts=4):
     for pts in courts:
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
-        bboxes.append((min(xs), min(ys), max(xs)-min(xs), max(ys)-min(ys)))
+        x1, y1 = min(xs), min(ys)
+        x2, y2 = max(xs), max(ys)
+        bboxes.append(
+            (
+                int(x1 / scale),
+                int(y1 / scale),
+                int((x2 - x1) / scale),
+                int((y2 - y1) / scale),
+            )
+        )
     return bboxes
 
 def create_blue_mask(image):
