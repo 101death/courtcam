@@ -702,81 +702,136 @@ def parse_court_positions_arg(arg):
     return positions
 
 
-def select_court_positions_gui(image, max_courts=4):
-    """Advanced GUI to select court positions with a sidebar."""
+def select_court_positions_gui(image, existing=None, max_courts=4):
+    """GUI to add/edit court bounding boxes with a half-width sidebar."""
     height, width = image.shape[:2]
-    sidebar_w = 120
-    window = "Select Courts"
+    sidebar_w = width // 2
+    window = "Edit Courts"
 
     display = np.zeros((height, width + sidebar_w, 3), dtype=np.uint8)
-    display[:, :width] = image.copy()
+    base_image = image.copy()
 
-    positions: List[Tuple[int, int, int, int]] = []
-    points: List[Tuple[int, int]] = []
+    def bbox_to_points(b):
+        x, y, w, h = b
+        return [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+
+    courts: List[List[Tuple[int, int]]] = (
+        [bbox_to_points(b) for b in existing] if existing else []
+    )
+    selected = 0 if courts else None
+    add_points: List[Tuple[int, int]] = []
+    dragging = None
+    mode = "idle"  # idle, adding, dragging
+
+    court_rects: List[Tuple[int, int, int, int]] = []
+    plus_rect = (width + sidebar_w // 2 - 25, 20, 50, 30)
+    del_rect = (width + sidebar_w // 2 - 25, 60, 50, 30)
 
     def draw_sidebar():
-        # Clear sidebar
-        display[:, width:] = (40, 40, 40)
-        # Plus sign button
-        cx = width + sidebar_w // 2
-        cy = 40
-        cv2.line(display, (cx - 15, cy), (cx + 15, cy), (255, 255, 255), 2)
-        cv2.line(display, (cx, cy - 15), (cx, cy + 15), (255, 255, 255), 2)
-        cv2.putText(
-            display,
-            f"Add Court {len(positions) + 1}",
-            (width + 10, cy + 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (255, 255, 255),
-            1,
-        )
-        cv2.putText(
-            display,
-            "Press q when done",
-            (width + 10, height - 10),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (255, 255, 255),
-            1,
-        )
+        nonlocal court_rects
+        display[:, width:] = (50, 50, 50)
+        # Buttons
+        cv2.rectangle(display, (plus_rect[0], plus_rect[1]),
+                      (plus_rect[0] + plus_rect[2], plus_rect[1] + plus_rect[3]),
+                      (90, 90, 90), -1)
+        cv2.rectangle(display, (del_rect[0], del_rect[1]),
+                      (del_rect[0] + del_rect[2], del_rect[1] + del_rect[3]),
+                      (90, 90, 90), -1)
+        cv2.putText(display, "+", (plus_rect[0] + 15, plus_rect[1] + 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(display, "-", (del_rect[0] + 18, del_rect[1] + 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
-    draw_sidebar()
+        court_rects = []
+        start_y = 110
+        for idx in range(len(courts)):
+            rect = (width + 10, start_y + idx * 40 - 20, sidebar_w - 20, 35)
+            court_rects.append(rect)
+            color = (0, 128, 255) if idx == selected else (80, 80, 80)
+            cv2.rectangle(display, (rect[0], rect[1]),
+                          (rect[0] + rect[2], rect[1] + rect[3]), color, -1)
+            cv2.putText(display, f"Court {idx + 1}", (rect[0] + 5, rect[1] + 23),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
 
-    plus_rect = (width + sidebar_w // 2 - 20, 20, 40, 40)
+        cv2.putText(display, "Press q when done", (width + 10, height - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
-    def finalize_current():
-        nonlocal points
-        if not points:
-            return
-        xs = [p[0] for p in points]
-        ys = [p[1] for p in points]
-        bbox = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
-        positions.append(bbox)
-        cv2.rectangle(
-            display,
-            (bbox[0], bbox[1]),
-            (bbox[0] + bbox[2], bbox[1] + bbox[3]),
-            (0, 255, 0),
-            2,
-        )
-        points = []
+    def draw_main():
+        display[:, :width] = base_image.copy()
+        if selected is not None and selected < len(courts):
+            pts = courts[selected]
+            for i in range(4):
+                p1 = pts[i]
+                p2 = pts[(i + 1) % 4]
+                cv2.line(display, p1, p2, (0, 255, 0), 2)
+                cv2.circle(display, p1, 5, (0, 0, 255), -1)
+        if mode == "adding":
+            for p in add_points:
+                cv2.circle(display, p, 4, (255, 0, 0), -1)
+            if len(add_points) > 1:
+                for i in range(len(add_points) - 1):
+                    cv2.line(display, add_points[i], add_points[i + 1],
+                             (255, 0, 0), 1)
+
+    def redraw():
+        draw_main()
         draw_sidebar()
 
+    redraw()
+
     def mouse(event, x, y, flags, param):
-        nonlocal points
-        if event != cv2.EVENT_LBUTTONDOWN:
-            return
+        nonlocal selected, add_points, dragging, mode
         if x >= width:
-            # Click in sidebar
-            if (
-                plus_rect[0] <= x <= plus_rect[0] + plus_rect[2]
-                and plus_rect[1] <= y <= plus_rect[1] + plus_rect[3]
-            ):
-                finalize_current()
-        else:
-            points.append((x, y))
-            cv2.circle(display, (x, y), 3, (0, 0, 255), -1)
+            if event == cv2.EVENT_LBUTTONDOWN:
+                if (plus_rect[0] <= x <= plus_rect[0] + plus_rect[2] and
+                        plus_rect[1] <= y <= plus_rect[1] + plus_rect[3] and
+                        len(courts) < max_courts):
+                    mode = "adding"
+                    add_points = []
+                    selected = None
+                elif (del_rect[0] <= x <= del_rect[0] + del_rect[2] and
+                        del_rect[1] <= y <= del_rect[1] + del_rect[3] and
+                        selected is not None):
+                    courts.pop(selected)
+                    if courts:
+                        selected = min(selected, len(courts) - 1)
+                    else:
+                        selected = None
+                    redraw()
+                else:
+                    for idx, rect in enumerate(court_rects):
+                        if rect[0] <= x <= rect[0] + rect[2] and rect[1] <= y <= rect[1] + rect[3]:
+                            selected = idx
+                            redraw()
+                            break
+            return
+
+        if mode == "adding":
+            if event == cv2.EVENT_LBUTTONDOWN:
+                add_points.append((x, y))
+                if len(add_points) == 4:
+                    courts.append(add_points.copy())
+                    selected = len(courts) - 1
+                    add_points = []
+                    mode = "idle"
+                redraw()
+        elif selected is not None and selected < len(courts):
+            if event == cv2.EVENT_LBUTTONDOWN:
+                for i, p in enumerate(courts[selected]):
+                    if (x - p[0]) ** 2 + (y - p[1]) ** 2 <= 100:
+                        dragging = i
+                        mode = "dragging"
+                        break
+            elif event == cv2.EVENT_MOUSEMOVE and dragging is not None:
+                courts[selected][dragging] = (max(0, min(x, width - 1)),
+                                              max(0, min(y, height - 1)))
+                redraw()
+            elif event == cv2.EVENT_LBUTTONUP and dragging is not None:
+                courts[selected][dragging] = (max(0, min(x, width - 1)),
+                                              max(0, min(y, height - 1)))
+                dragging = None
+                mode = "idle"
+                redraw()
 
     cv2.namedWindow(window, cv2.WINDOW_NORMAL)
     cv2.setMouseCallback(window, mouse)
@@ -785,14 +840,16 @@ def select_court_positions_gui(image, max_courts=4):
         cv2.imshow(window, display)
         key = cv2.waitKey(1) & 0xFF
         if key in (ord("q"), 27):
-            finalize_current()
-            break
-        if len(positions) >= max_courts:
-            finalize_current()
             break
 
     cv2.destroyWindow(window)
-    return positions
+    # Convert points back to bounding boxes
+    bboxes: List[Tuple[int, int, int, int]] = []
+    for pts in courts:
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        bboxes.append((min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)))
+    return bboxes
 
 def create_blue_mask(image):
     """Create a mask for blue areas in the image"""
@@ -1410,7 +1467,7 @@ def main(use_gui_courts=False):
                 "Launching GUI to select court positions. Press 'q' when finished",
                 "INFO",
             )
-            selected = select_court_positions_gui(image)
+            selected = select_court_positions_gui(image, Config.COURT_POSITIONS)
             if selected:
                 Config.COURT_POSITIONS = [tuple(int(v) for v in b) for b in selected]
                 try:
