@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Tennis Court Detector - Detects people on tennis courts using YOLOv5
+Tennis Court Detector - Detects people on tennis courts using YOLOv8 models
 """
 import os
 import cv2 # type: ignore
