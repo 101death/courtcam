@@ -28,6 +28,12 @@ python main.py
 ```bash
 python main.py --no-camera
 ```
+5. Run the test suite:
+
+```bash
+pytest
+```
+
 
 ## Configuration
 
