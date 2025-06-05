@@ -2072,7 +2072,7 @@ def download_yolo_model(model_name, url=None, disable_ssl_verify=False):
                                 break
                             out_file.write(buffer)
                             block_num += 1
-                            report_progress(block_num, block_size, total_size) # Re-use progress reporter
+                            report_progress(block_num, block_size, total_size) # Reuse progress reporter
                     OutputManager.status(f"Downloading {model_name}: 100% Complete")
                     OutputManager.log(f"Model {model_name} downloaded successfully from alternative URL", "SUCCESS")
                     return model_path
