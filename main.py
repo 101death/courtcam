@@ -8,6 +8,9 @@ import numpy as np # type: ignore
 import json
 import torch # type: ignore
 from shapely.geometry import Polygon, Point # type: ignore
+from typing import List, Tuple
+import tkinter as tk
+from PIL import Image, ImageTk
 import sys
 import ssl
 import argparse
@@ -99,6 +102,9 @@ class Config:
         MAX_ASPECT_RATIO = 4.0       # Increased from 3.0 to allow wider courts
         MIN_BLUE_RATIO = 0.2         # Reduced from 0.3 to be more lenient
         MIN_GREEN_RATIO = 0.02       # Reduced from 0.05 to be more lenient
+
+    # Saved court positions
+    COURT_POSITIONS = []            # Filled after detection, loaded from config
     
     # Morphological operation settings
     class Morphology:
@@ -703,6 +709,13 @@ if os.path.exists(CONFIG_FILE):
                 Config.MultiProcessing.ENABLED = _loaded_config['MultiProcessing'].get('ENABLED', Config.MultiProcessing.ENABLED)
                 Config.MultiProcessing.NUM_PROCESSES = _loaded_config['MultiProcessing'].get('NUM_PROCESSES', Config.MultiProcessing.NUM_PROCESSES)
 
+            # Pre-detected court positions
+            if 'CourtPositions' in _loaded_config:
+                Config.COURT_POSITIONS = [
+                    tuple(int(v) for v in bbox)
+                    for bbox in _loaded_config.get('CourtPositions', [])
+                ]
+
             # Configure OutputManager AFTER loading config
             OutputManager.configure(_loaded_config)
             OutputManager.log(f"Loaded configuration from {CONFIG_FILE}", "DEBUG")
@@ -714,6 +727,208 @@ if os.path.exists(CONFIG_FILE):
 else:
     OutputManager.log(f"{CONFIG_FILE} not found. Using default class values.", "DEBUG")
 # === End Load Configuration ===
+
+def parse_court_positions_arg(arg):
+    """Parse --court-positions argument into a list of (x, y, w, h) tuples."""
+    positions = []
+    for part in arg.split(';'):
+        part = part.strip()
+        if not part:
+            continue
+        nums = [int(n) for n in part.split(',')]
+        if len(nums) != 4:
+            raise ValueError(f"Invalid court position: '{part}'")
+        positions.append(tuple(nums))
+    if not positions:
+        raise ValueError("No valid court positions provided")
+    return positions
+
+
+def court_positions_defined() -> bool:
+    """Check if court positions contain any non-zero bounding box."""
+    if not Config.COURT_POSITIONS:
+        return False
+    for bbox in Config.COURT_POSITIONS:
+        if any(int(v) != 0 for v in bbox):
+            return True
+    return False
+
+
+def select_court_positions_gui(image, existing=None, max_courts=4):
+    """Tkinter-based GUI to select court polygons with animated buttons."""
+    height, width = image.shape[:2]
+
+    # Resize image to fit within 800x600 while preserving aspect ratio
+    max_w, max_h = 800, 600
+    scale = min(max_w / width, max_h / height, 1.0)
+    disp_w, disp_h = int(width * scale), int(height * scale)
+    if scale != 1.0:
+        resized = cv2.resize(image, (disp_w, disp_h), interpolation=cv2.INTER_AREA)
+    else:
+        resized = image
+
+    img_rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(img_rgb)
+
+    root = tk.Tk()
+    root.title("Edit Courts")
+
+    canvas = tk.Canvas(root, width=disp_w, height=disp_h)
+    canvas.pack(side=tk.LEFT)
+    tk_img = ImageTk.PhotoImage(pil_img)
+    canvas.create_image(0, 0, anchor="nw", image=tk_img)
+
+    sidebar = tk.Frame(root, bg="#333")
+    sidebar.pack(side=tk.RIGHT, fill=tk.Y)
+
+    instructions = (
+        "Click '+' to start a new court and "
+        "mark corners with the mouse. Use 'Done' "
+        "to close the current court or 'Finish' "
+        "when all courts are added."
+    )
+    instr_label = tk.Label(
+        sidebar,
+        text=instructions,
+        wraplength=140,
+        justify=tk.LEFT,
+        bg="#333",
+        fg="white",
+    )
+    instr_label.pack(padx=5, pady=(5, 0))
+
+    listbox = tk.Listbox(sidebar, bg="#222", fg="white", highlightthickness=0)
+    listbox.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
+
+    btn_frame = tk.Frame(sidebar, bg="#333")
+    btn_frame.pack(pady=10)
+
+    def style_button(btn):
+        """Style sidebar buttons so they remain readable"""
+        btn.configure(
+            bg="#e0e0e0",
+            fg="black",
+            activebackground="#c0c0c0",
+            activeforeground="black",
+            relief=tk.FLAT,
+            bd=1,
+            highlightthickness=0,
+        )
+        btn.bind("<Enter>", lambda e: btn.configure(bg="#d0d0d0"))
+        btn.bind("<Leave>", lambda e: btn.configure(bg="#e0e0e0"))
+
+    add_btn = tk.Button(btn_frame, text="+", width=4)
+    del_btn = tk.Button(btn_frame, text="-", width=4)
+    done_btn = tk.Button(btn_frame, text="Done", width=6)
+    finish_btn = tk.Button(btn_frame, text="Finish", width=6)
+
+    for b in (add_btn, del_btn, done_btn, finish_btn):
+        style_button(b)
+        b.pack(pady=2)
+
+    courts: List[List[Tuple[int, int]]] = []
+    if existing:
+        for bbox in existing:
+            x, y, w, h = bbox
+            pts = [
+                (int(x * scale), int(y * scale)),
+                (int((x + w) * scale), int(y * scale)),
+                (int((x + w) * scale), int((y + h) * scale)),
+                (int(x * scale), int((y + h) * scale)),
+            ]
+            courts.append(pts)
+            listbox.insert(tk.END, f"Court {len(courts)}")
+            canvas.create_polygon(pts, outline="green", fill="", width=2, tags=f"court{len(courts)-1}")
+
+    mode = "idle"
+    curr_pts: List[Tuple[int, int]] = []
+    curr_drawn = []
+
+    def redraw_current():
+        for item in curr_drawn:
+            canvas.delete(item)
+        curr_drawn.clear()
+        if curr_pts:
+            for p in curr_pts:
+                curr_drawn.append(canvas.create_oval(p[0]-3, p[1]-3, p[0]+3, p[1]+3, fill="red", outline=""))
+            if len(curr_pts) > 1:
+                for i in range(len(curr_pts)-1):
+                    curr_drawn.append(canvas.create_line(curr_pts[i], curr_pts[i+1], fill="red"))
+
+    def on_canvas_click(event):
+        nonlocal mode, curr_pts
+        if mode != "adding":
+            return
+        p = (event.x, event.y)
+        curr_pts.append(p)
+        if len(curr_pts) > 2:
+            first = curr_pts[0]
+            if (first[0]-p[0])**2 + (first[1]-p[1])**2 < 100:
+                done_current()
+                return
+        redraw_current()
+
+    canvas.bind("<Button-1>", on_canvas_click)
+
+    def refresh_listbox():
+        listbox.delete(0, tk.END)
+        for i in range(len(courts)):
+            listbox.insert(tk.END, f"Court {i+1}")
+
+    def done_current():
+        nonlocal mode, curr_pts
+        if len(curr_pts) >= 3:
+            courts.append(curr_pts.copy())
+            canvas.create_polygon(curr_pts, outline="green", fill="", width=2, tags=f"court{len(courts)-1}")
+            refresh_listbox()
+        curr_pts = []
+        redraw_current()
+        mode = "idle"
+
+    def start_add():
+        nonlocal mode, curr_pts
+        if len(courts) >= max_courts:
+            return
+        mode = "adding"
+        curr_pts = []
+        redraw_current()
+
+    def delete_selected():
+        sel = listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        courts.pop(idx)
+        canvas.delete(f"court{idx}")
+        for i in range(idx, len(courts)):
+            canvas.itemconfigure(f"court{i+1}", tags=f"court{i}")
+        refresh_listbox()
+
+    def finish():
+        root.destroy()
+
+    add_btn.configure(command=start_add)
+    del_btn.configure(command=delete_selected)
+    done_btn.configure(command=done_current)
+    finish_btn.configure(command=finish)
+
+    root.mainloop()
+
+    bboxes: List[Tuple[int, int, int, int]] = []
+    for pts in courts:
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        x1, y1 = min(xs), min(ys)
+        x2, y2 = max(xs), max(ys)
+        bboxes.append(
+            (
+                int(x1 / scale),
+                int(y1 / scale),
+                int((x2 - x1) / scale),
+                int((y2 - y1) / scale),
+            )
+        )
+    return bboxes
 
 def create_blue_mask(image):
     """Create a mask for blue areas in the image"""
@@ -1214,7 +1429,7 @@ def detect_people_ultralytics(model, image, confidence=0.25):
     #     OutputManager.log("No people detected with ultralytics API", "INFO")
         
     return people
-def main():
+def main(use_gui_courts=False):
     """Main function optimized for Raspberry Pi Zero"""
     # Start timer
     start_time = time.time()
@@ -1228,18 +1443,53 @@ def main():
     
     # Initialize multiprocessing if enabled
     if Config.MultiProcessing.ENABLED:
-        # Set the number of processes if not already set
         if Config.MultiProcessing.NUM_PROCESSES <= 0:
-            # Use 3 processes or the number of CPU cores if less than 3
             Config.MultiProcessing.NUM_PROCESSES = min(3, cpu_count())
-        
+
         OutputManager.log(f"Multiprocessing enabled with {Config.MultiProcessing.NUM_PROCESSES} processes", "INFO")
-    
+
     try:
+        input_path = Config.Paths.input_path()  # Default input path
+
+        if use_gui_courts:
+            # GUI mode skips camera capture and court/people detection
+            OutputManager.status("Loading image")
+            if input_path == Config.Paths.input_path():
+                try:
+                    os.makedirs(os.path.dirname(input_path), exist_ok=True)
+                    OutputManager.log(f"Created images directory at {os.path.dirname(input_path)}", "INFO")
+                except Exception as e:
+                    OutputManager.log(f"Cannot create images directory: {str(e)}", "ERROR")
+
+            image = cv2.imread(input_path)
+            if image is None:
+                OutputManager.log(f"Unable to open the image at {input_path}", "ERROR")
+                return 1
+
+            OutputManager.log(
+                "Launching GUI to select court positions. Press 'Finish' or 'q' when done", "INFO"
+            )
+            selected = select_court_positions_gui(image, Config.COURT_POSITIONS)
+            if selected:
+                Config.COURT_POSITIONS = [tuple(int(v) for v in b) for b in selected]
+                try:
+                    existing_cfg = {}
+                    if os.path.exists(CONFIG_FILE):
+                        with open(CONFIG_FILE, "r") as f:
+                            existing_cfg = json.load(f)
+                    existing_cfg["CourtPositions"] = Config.COURT_POSITIONS
+                    json_text = json.dumps(existing_cfg, indent=4)
+                    with open(CONFIG_FILE, "w") as f:
+                        f.write(json_text)
+                    OutputManager.log("Court positions saved via GUI", "DEBUG")
+                except Exception as e:
+                    OutputManager.log(f"Couldn't save court positions: {str(e)}", "WARNING")
+            else:
+                OutputManager.log("No courts selected in GUI", "WARNING")
+            return 0
+
         # === Camera Logic ===
-        input_path = Config.Paths.input_path() # Default input path, will be overridden by camera unless --no-camera
-        
-        if not args.no_camera: # Attempt camera capture by default
+        if not args.no_camera:  # Attempt camera capture by default
             camera_output_dir = "output"
             camera_output_filename = "input.png"
             camera_output_path = os.path.join(camera_output_dir, camera_output_filename)
@@ -1298,11 +1548,11 @@ def main():
                 # Show final summary with error and exit
                 processing_time = time.time() - start_time
                 final_summary = OutputManager.create_final_summary(
-                    people_count=None, 
-                    court_counts={}, 
+                    people_count=None,
+                    total_courts=0,
                     output_path=None,
                     processing_time=processing_time,
-                    total_courts=0
+                    detailed_court_counts={}
                 )
                 print_error_summary(final_summary)
                 return 1
@@ -1310,11 +1560,11 @@ def main():
             OutputManager.log(f"Error loading image: {e}", "ERROR")
             processing_time = time.time() - start_time
             final_summary = OutputManager.create_final_summary(
-                people_count=None, 
-                court_counts={}, 
+                people_count=None,
+                total_courts=0,
                 output_path=None,
                 processing_time=processing_time,
-                total_courts=0
+                detailed_court_counts={}
             )
             print_error_summary(final_summary)
             return 1
@@ -1331,82 +1581,107 @@ def main():
             OutputManager.log(f"Could not create debug folder: {e}", "WARNING")
             debug_folder = None  # Set to None to prevent further debug saves
             # Continue execution even if debug folder can't be created
-        
+
         # Detect tennis courts
         t_start_court = time.time() # Start timing for court detection
-        try:
-            OutputManager.status("Finding courts...") # Consolidated status
-            # OutputManager.status("Analyzing court colors") # Removed
-            blue_mask = create_blue_mask(image)
-            green_mask = create_green_mask(image)
-            # OutputManager.log("Court colors analyzed", "SUCCESS") # Removed
-            if Config.Output.EXTRA_VERBOSE:
-                OutputManager.log(
-                    f"Blue mask {np.count_nonzero(blue_mask)}px, green mask {np.count_nonzero(green_mask)}px",
-                    "INFO",
-                )
-            
-            # Process the raw blue mask to avoid connecting unrelated areas like the sky
-            blue_mask_raw = blue_mask.copy()
-            
-            # Create court mask where green overrides blue
+
+        if court_positions_defined():
+            OutputManager.log("Using saved court positions from config", "INFO")
             height, width = image.shape[:2]
+            court_numbers_mask = np.zeros((height, width), dtype=np.uint8)
             court_mask = np.zeros((height, width), dtype=np.uint8)
-            court_mask[blue_mask_raw > 0] = 1  # Blue areas
-            court_mask[green_mask > 0] = 0     # Green areas override blue
-            
-            # Filter out blue regions that don't have any green nearby (like sky)
-            # OutputManager.status("Processing court regions") # Removed
-            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(blue_mask_raw, connectivity=8)
-            if Config.Output.EXTRA_VERBOSE:
-                OutputManager.log(
-                    f"Initial connected blue regions: {num_labels-1}",
-                    "DEBUG",
-                )
-            
-            # For each blue region, check if there's green nearby
-            filtered_court_mask = np.zeros_like(court_mask)
-            valid_regions = 0
-            
-            for i in range(1, num_labels):
-                region = (labels == i).astype(np.uint8)
-                area = stats[i, cv2.CC_STAT_AREA]
-                
-                # Skip very small regions
-                if area < Config.Court.MIN_AREA:
-                    continue
-                
-                # Dilate the region to check for nearby green
-                kernel = np.ones((15, 15), np.uint8)
-                dilated_region = cv2.dilate(region, kernel, iterations=1)
-                
-                # Check if there's green nearby this blue region
-                green_nearby = cv2.bitwise_and(green_mask, dilated_region)
-                green_nearby_pixels = cv2.countNonZero(green_nearby)
-                
-                # Only keep blue regions that have at least some green nearby
-                if green_nearby_pixels > 30:  # Reduced from 50 to be more lenient
-                    # This is likely a court (not sky) - keep it
-                    filtered_court_mask[region > 0] = court_mask[region > 0]
-                    valid_regions += 1
-                    if Config.Output.EXTRA_VERBOSE:
-                        OutputManager.log(
-                            f"Region {i}: area {area}, nearby green {green_nearby_pixels} -> likely court",
-                            "DEBUG",
-                        )
-            
-            # OutputManager.log(f"Court regions processed: {valid_regions} valid regions found", "SUCCESS") # Removed
-            
-            # Use the filtered court mask for further processing
-            court_mask = filtered_court_mask
-        except Exception as e:
-            OutputManager.log(f"Error processing court colors/regions: {str(e)}", "ERROR")
-            # Continue with blank masks as a fallback
-            height, width = image.shape[:2]
+            courts = []
+            for idx, bbox in enumerate(Config.COURT_POSITIONS):
+                x, y, w, h = [int(v) for v in bbox]
+                cv2.rectangle(court_numbers_mask, (x, y), (x + w, y + h), idx + 1, -1)
+                cv2.rectangle(court_mask, (x, y), (x + w, y + h), 255, -1)
+                approx = np.array([[[x, y]], [[x + w, y]], [[x + w, y + h]], [[x, y + h]]], dtype=np.int32)
+                courts.append({
+                    'court_number': idx + 1,
+                    'bbox': (x, y, w, h),
+                    'centroid': (x + w / 2, y + h / 2),
+                    'approx': approx,
+                    'contour': approx,
+                    'hull': approx,
+                    'blue_ratio': 1.0,
+                    'green_ratio': 0.0,
+                    'blue_mask': np.zeros((height, width), dtype=np.uint8),
+                    'green_mask': np.zeros((height, width), dtype=np.uint8),
+                    'area': w * h,
+                    'blue_pixels': w * h,
+                    'green_pixels': 0
+                })
             blue_mask_raw = np.zeros((height, width), dtype=np.uint8)
             green_mask = np.zeros((height, width), dtype=np.uint8)
-            court_mask = np.zeros((height, width), dtype=np.uint8)
-            valid_regions = 0 # Ensure this is defined
+            court_mask_viz = np.zeros((height, width, 3), dtype=np.uint8)
+            court_mask_viz[court_mask > 0] = [255, 127, 0]
+            valid_regions = len(courts)
+            duration_court_detection = 0.0
+        else:
+            try:
+                OutputManager.status("Finding courts...") # Consolidated status
+            # OutputManager.status("Analyzing court colors") # Removed
+                blue_mask = create_blue_mask(image)
+                green_mask = create_green_mask(image)
+                # OutputManager.log("Court colors analyzed", "SUCCESS") # Removed
+                if Config.Output.EXTRA_VERBOSE:
+                    OutputManager.log(f"Blue mask: {np.count_nonzero(blue_mask)} pixels, Green mask: {np.count_nonzero(green_mask)} pixels", "INFO")
+                
+                # Process the raw blue mask to avoid connecting unrelated areas like the sky
+                blue_mask_raw = blue_mask.copy()
+                
+                # Create court mask where green overrides blue
+                height, width = image.shape[:2]
+                court_mask = np.zeros((height, width), dtype=np.uint8)
+                court_mask[blue_mask_raw > 0] = 1  # Blue areas
+                court_mask[green_mask > 0] = 0     # Green areas override blue
+                
+                # Filter out blue regions that don't have any green nearby (like sky)
+                # OutputManager.status("Processing court regions") # Removed
+                num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(blue_mask_raw, connectivity=8)
+                if Config.Output.EXTRA_VERBOSE:
+                     OutputManager.log(f"Found {num_labels-1} initial connected blue regions", "DEBUG")
+                
+                # For each blue region, check if there's green nearby
+                filtered_court_mask = np.zeros_like(court_mask)
+                valid_regions = 0
+                
+                for i in range(1, num_labels):
+                    region = (labels == i).astype(np.uint8)
+                    area = stats[i, cv2.CC_STAT_AREA]
+                    
+                    # Skip very small regions
+                    if area < Config.Court.MIN_AREA:
+                        continue
+                    
+                    # Dilate the region to check for nearby green
+                    kernel = np.ones((15, 15), np.uint8)
+                    dilated_region = cv2.dilate(region, kernel, iterations=1)
+                    
+                    # Check if there's green nearby this blue region
+                    green_nearby = cv2.bitwise_and(green_mask, dilated_region)
+                    green_nearby_pixels = cv2.countNonZero(green_nearby)
+                    
+                    # Only keep blue regions that have at least some green nearby
+                    if green_nearby_pixels > 30:  # Reduced from 50 to be more lenient
+                        # This is likely a court (not sky) - keep it
+                        filtered_court_mask[region > 0] = court_mask[region > 0]
+                        valid_regions += 1
+                        if Config.Output.EXTRA_VERBOSE:
+                            OutputManager.log(f"Region {i}: area={area}, green nearby={green_nearby_pixels} - likely court", "DEBUG")
+                
+                # OutputManager.log(f"Court regions processed: {valid_regions} valid regions found", "SUCCESS") # Removed
+                
+                # Use the filtered court mask for further processing
+                court_mask = filtered_court_mask
+            except Exception as e:
+                OutputManager.log(f"Error processing court colors/regions: {str(e)}", "ERROR")
+                # Continue with blank masks as a fallback
+                height, width = image.shape[:2]
+                blue_mask_raw = np.zeros((height, width), dtype=np.uint8)
+                green_mask = np.zeros((height, width), dtype=np.uint8)
+                court_mask = np.zeros((height, width), dtype=np.uint8)
+                valid_regions = 0 # Ensure this is defined
 
         if Config.Output.EXTRA_VERBOSE:
             OutputManager.log(f"Valid blue regions kept: {valid_regions}", "INFO")
@@ -1435,30 +1710,46 @@ def main():
             OutputManager.log(f"Court visualization error: {e}", "WARNING")
             court_mask_viz = image.copy()  # Use original image as fallback
         
-        # Assign court numbers to each separate blue region
-        try:
-            # OutputManager.status("Identifying courts") # Removed
-            court_numbers_mask, courts = assign_court_numbers(court_mask)
-            
-            # Output appropriate message based on court detection
-            if len(courts) == 0:
-                OutputManager.log("No courts found", "WARNING")
-            else:
-                OutputManager.log(f"Found {len(courts)} court{'s' if len(courts) > 1 else ''}", "SUCCESS")
-                if Config.Output.EXTRA_VERBOSE:
-                    # Log details of each court
-                    for i, court in enumerate(courts):
-                        cx, cy = court['centroid']
-                        area = court['area']
-                        OutputManager.log(
-                            f"Court {i+1}: center ({int(cx)}, {int(cy)}), area {area:.1f}px",
-                            "DEBUG",
-                        )
-        except Exception as e:
-            OutputManager.log(f"Court identification error: {e}", "ERROR")
-            # Create fallback empty data
-            courts = []
-            court_numbers_mask = np.zeros_like(court_mask)
+        # Assign court numbers to each separate blue region if not preloaded
+        if not court_positions_defined():
+            try:
+                court_numbers_mask, courts = assign_court_numbers(court_mask)
+
+                # Output appropriate message based on court detection
+                if len(courts) == 0:
+                    OutputManager.log("No tennis courts found in the image", "WARNING")
+                else:
+                    OutputManager.log(f"Found {len(courts)} tennis court{'s' if len(courts) > 1 else ''}", "SUCCESS")
+                    if Config.Output.EXTRA_VERBOSE:
+                        for i, court in enumerate(courts):
+                            cx, cy = court['centroid']
+                            area = court['area']
+                            OutputManager.log(f"Court {i+1}: center=({int(cx)}, {int(cy)}), area={area:.1f} pixels", "DEBUG")
+            except Exception as e:
+                OutputManager.log(f"Error identifying courts: {str(e)}", "ERROR")
+                courts = []
+                court_numbers_mask = np.zeros_like(court_mask)
+
+        if not court_positions_defined() and courts:
+            # Convert numpy integers to plain Python ints for JSON serialization
+            Config.COURT_POSITIONS = [tuple(int(v) for v in c['bbox']) for c in courts]
+
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    cfg = json.load(f)
+            except Exception:
+                cfg = {}
+
+            cfg['CourtPositions'] = Config.COURT_POSITIONS
+
+            # Serialize to a string first to avoid corrupting the file if it fails
+            try:
+                json_text = json.dumps(cfg, indent=4)
+                with open(CONFIG_FILE, 'w') as f:
+                    f.write(json_text)
+                OutputManager.log("Saved court positions to config", "DEBUG")
+            except Exception as e:
+                OutputManager.log(f"Couldn't save court positions: {str(e)}", "WARNING")
         
         # Create a color-coded court mask for visualization
         try:
@@ -1516,7 +1807,9 @@ def main():
         except Exception as e:
             OutputManager.log(f"Mask overlay error: {e}", "WARNING")
             mask_overlay = image.copy()  # Use original image as fallback
-        
+
+        duration_court_detection = time.time() - t_start_court
+
         # Detect people
         people = []
         model_path = None # Initialize model_path
@@ -1622,7 +1915,13 @@ def main():
                     OutputManager.log(f"Error loading model {Config.Model.NAME}: {e}", "ERROR")
                     # Attempt to create a summary and exit
                     processing_time = time.time() - start_time
-                    final_summary_str = OutputManager.create_final_summary(None, {}, None, processing_time, len(courts) if 'courts' in locals() else 0)
+                    final_summary_str = OutputManager.create_final_summary(
+                        people_count=None,
+                        total_courts=len(courts) if 'courts' in locals() else 0,
+                        output_path=None,
+                        processing_time=processing_time,
+                        detailed_court_counts={}
+                    )
                     OutputManager.fancy_summary("ERROR SUMMARY", final_summary_str, processing_time=processing_time, is_error=True)
                     return 1 # Exit due to model load failure
             
@@ -1967,11 +2266,11 @@ def main():
         # Create a basic summary with the error
         processing_time = time.time() - start_time
         final_summary = OutputManager.create_final_summary(
-            people_count=None, 
-            court_counts={}, 
+            people_count=None,
+            total_courts=0,
             output_path=None,
             processing_time=processing_time,
-            total_courts=0
+            detailed_court_counts={}
         )
         print_error_summary(final_summary)
         return 1
@@ -2406,6 +2705,16 @@ if __name__ == "__main__":
         parser.add_argument("--processes", type=int, help="Number of processes to use for multiprocessing", default=Config.MultiProcessing.NUM_PROCESSES)
         parser.add_argument("--extra-verbose", action="store_true", help="Show extra detailed output for debugging")
         parser.add_argument("--force-macos-cert-install", action="store_true", help="Force macOS certificate installation")
+        parser.add_argument(
+            "--court-positions",
+            type=str,
+            help="Set court positions manually as 'x,y,w,h;x,y,w,h'"
+        )
+        parser.add_argument(
+            "--set-courts-gui",
+            action="store_true",
+            help="Interactively select court corners via GUI"
+        )
         # Add new arguments for merged functionality
         parser.add_argument("--install-ultralytics", action="store_true", help="Install the ultralytics package")
         parser.add_argument("--test-yolo", action="store_true", help="Run YOLO model test on the input image")
@@ -2487,9 +2796,35 @@ if __name__ == "__main__":
             if args.processes > 0:
                 Config.MultiProcessing.NUM_PROCESSES = args.processes
             
+
             # Update extra verbose setting
             if args.extra_verbose:
                 Config.Output.EXTRA_VERBOSE = True
+
+            # Manually set court positions from command line
+            if args.court_positions:
+                try:
+                    Config.COURT_POSITIONS = parse_court_positions_arg(args.court_positions)
+
+                    existing_cfg = {}
+                    if os.path.exists(CONFIG_FILE):
+                        try:
+                            with open(CONFIG_FILE, 'r') as f:
+                                existing_cfg = json.load(f)
+                        except Exception:
+                            existing_cfg = {}
+
+                    existing_cfg['CourtPositions'] = Config.COURT_POSITIONS
+
+                    json_text = json.dumps(existing_cfg, indent=4)
+                    with open(CONFIG_FILE, 'w') as f:
+                        f.write(json_text)
+                    OutputManager.log("Court positions set via command line", "DEBUG")
+                except Exception as e:
+                    OutputManager.log(f"Invalid --court-positions: {str(e)}", "ERROR")
+                    sys.exit(1)
+
+            use_gui_courts = args.set_courts_gui
             
             # Handle test mode
             if args.test_mode:
@@ -2587,7 +2922,7 @@ if __name__ == "__main__":
                         else:
                             args.device = "cpu"
                         print(f"\nRunning with best configuration...")
-                        sys.exit(main())
+                        sys.exit(main(use_gui_courts))
                     else:
                         print("Exiting.")
                         sys.exit(0)
@@ -2595,7 +2930,7 @@ if __name__ == "__main__":
                     print("Exiting.")
                     sys.exit(0)
             
-            sys.exit(main())
+            sys.exit(main(use_gui_courts))
         except Exception as e:
             print(f"\nError setting up configuration: {str(e)}")
             sys.exit(1)
