@@ -161,6 +161,7 @@ python main.py [options]
 - `--show-labels`: Show detailed labels on output image
 - `--processes NUM`: Set number of processes for multiprocessing
 - `--court-positions LIST`: Manually set court bounding boxes as `x,y,w,h` pairs separated by semicolons
+- `--set-courts-gui`: Open a window to click the four corners of each court (up to four)
 
 When court positions are provided or saved in `config.json`, court detection is skipped on subsequent runs.
 

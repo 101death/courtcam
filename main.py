@@ -700,6 +700,48 @@ def parse_court_positions_arg(arg):
         raise ValueError("No valid court positions provided")
     return positions
 
+
+def select_court_positions_gui(image, max_courts=4):
+    """Interactively select court positions by clicking four corners."""
+    window = "Select Courts"
+    temp_img = image.copy()
+    positions = []
+    points = []
+
+    cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+
+    def mouse(event, x, y, flags, param):
+        nonlocal temp_img, positions, points
+        if event == cv2.EVENT_LBUTTONDOWN:
+            points.append((x, y))
+            cv2.circle(temp_img, (x, y), 4, (0, 0, 255), -1)
+            cv2.imshow(window, temp_img)
+            if len(points) == 4:
+                xs = [p[0] for p in points]
+                ys = [p[1] for p in points]
+                bbox = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+                positions.append(bbox)
+                cv2.rectangle(
+                    temp_img,
+                    (bbox[0], bbox[1]),
+                    (bbox[0] + bbox[2], bbox[1] + bbox[3]),
+                    (0, 255, 0),
+                    2,
+                )
+                cv2.imshow(window, temp_img)
+                points = []
+
+    cv2.setMouseCallback(window, mouse)
+
+    while True:
+        cv2.imshow(window, temp_img)
+        key = cv2.waitKey(1) & 0xFF
+        if key in (ord("q"), 27) or len(positions) >= max_courts:
+            break
+
+    cv2.destroyWindow(window)
+    return positions
+
 def create_blue_mask(image):
     """Create a mask for blue areas in the image"""
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -1310,6 +1352,30 @@ def main():
             OutputManager.log(f"Can't create debug folder: {str(e)}", "WARNING")
             debug_folder = None  # Set to None to prevent further debug saves
             # Continue execution even if debug folder can't be created
+
+        if 'use_gui_courts' in locals() and use_gui_courts:
+            OutputManager.log(
+                "Launching GUI to select court positions. Press 'q' when finished",
+                "INFO",
+            )
+            selected = select_court_positions_gui(image)
+            if selected:
+                Config.COURT_POSITIONS = [tuple(int(v) for v in b) for b in selected]
+                try:
+                    with open(CONFIG_FILE, 'r') as f:
+                        cfg = json.load(f)
+                except Exception:
+                    cfg = {}
+                cfg['CourtPositions'] = Config.COURT_POSITIONS
+                try:
+                    json_text = json.dumps(cfg, indent=4)
+                    with open(CONFIG_FILE, 'w') as f:
+                        f.write(json_text)
+                    OutputManager.log("Court positions saved via GUI", "DEBUG")
+                except Exception as e:
+                    OutputManager.log(f"Couldn't save court positions: {str(e)}", "WARNING")
+            else:
+                OutputManager.log("No courts selected in GUI", "WARNING")
         
         # Detect tennis courts
         t_start_court = time.time() # Start timing for court detection
@@ -2428,6 +2494,11 @@ if __name__ == "__main__":
             type=str,
             help="Set court positions manually as 'x,y,w,h;x,y,w,h'"
         )
+        parser.add_argument(
+            "--set-courts-gui",
+            action="store_true",
+            help="Interactively select court corners via GUI"
+        )
         # Add new arguments for merged functionality
         parser.add_argument("--install-ultralytics", action="store_true", help="Install the ultralytics package")
         parser.add_argument("--test-yolo", action="store_true", help="Run YOLO model test on the input image")
@@ -2536,6 +2607,8 @@ if __name__ == "__main__":
                 except Exception as e:
                     OutputManager.log(f"Invalid --court-positions: {str(e)}", "ERROR")
                     sys.exit(1)
+
+            use_gui_courts = args.set_courts_gui
             
             # Handle test mode
             if args.test_mode:
