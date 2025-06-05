@@ -248,7 +248,7 @@ class Config:
                     pass  # If parsing fails, fall back to default
             
             # Default to yolov5s if model not found
-            OutputManager.log(f"Model {model_name} not found in known models. Defaulting to yolov5s.", "WARNING")
+            OutputManager.log(f"Unknown model {model_name}; using yolov5s", "WARNING")
             return cls.MODEL_URLS["yolov5s"]
     
     # Multiprocessing settings
@@ -279,6 +279,33 @@ class OutputManager:
     BOLD = "\033[1m"
     UNDERLINE = "\033[4m"
     RESET = "\033[0m"
+
+    @classmethod
+    def supports_color(cls):
+        """Return True if the running environment supports color output."""
+        if not sys.stdout.isatty():
+            return False
+        if os.environ.get("NO_COLOR"):
+            return False
+        return True
+
+    @classmethod
+    def colorize(cls, text, color):
+        """Wrap text with ANSI color codes if enabled."""
+        if cls._use_color:
+            return f"{color}{text}{cls.RESET}"
+        return text
+
+    @staticmethod
+    def clean_message(message: str) -> str:
+        """Simple cleanup for log messages."""
+        if not message:
+            return ""
+        msg = str(message).strip()
+        msg = re.sub(r"\s+", " ", msg)
+        if msg and msg[0].islower():
+            msg = msg[0].upper() + msg[1:]
+        return msg
     
     # Symbols for different message types
     SYMBOLS = {
@@ -313,7 +340,7 @@ class OutputManager:
     _super_quiet = Config.Output.SUPER_QUIET
     _summary_only = Config.Output.SUMMARY_ONLY
     _extra_verbose = Config.Output.EXTRA_VERBOSE
-    _use_color = Config.Output.USE_COLOR_OUTPUT
+    _use_color = Config.Output.USE_COLOR_OUTPUT and sys.stdout.isatty() and not os.environ.get("NO_COLOR")
     _show_timestamp = Config.Output.SHOW_TIMESTAMP
 
     @classmethod
@@ -324,6 +351,7 @@ class OutputManager:
         cls._super_quiet = output_config.get('SUPER_QUIET', Config.Output.SUPER_QUIET)
         cls._summary_only = output_config.get('SUMMARY_ONLY', Config.Output.SUMMARY_ONLY)
         cls._extra_verbose = output_config.get('EXTRA_VERBOSE', Config.Output.EXTRA_VERBOSE)
+        cls._use_color = Config.Output.USE_COLOR_OUTPUT and sys.stdout.isatty() and not os.environ.get("NO_COLOR")
         # Keep color and timestamp from default class config for now
         # Could add these to config.json if needed
 
@@ -381,30 +409,35 @@ class OutputManager:
             "WARNING": cls.YELLOW,
             "ERROR": cls.RED,
             "DEBUG": cls.GRAY,
-            "FATAL": cls.RED, # Fatal errors use red
-            "STATUS": cls.CYAN # Status messages
+            "FATAL": cls.RED,  # Fatal errors use red
+            "STATUS": cls.CYAN,  # Status messages
         }
         
         level_upper = level.upper()
         symbol = cls.SYMBOLS.get(level_upper, "")
-        color = color_map.get(level_upper, cls.RESET) if cls._use_color else ""
-        reset = cls.RESET if cls._use_color else ""
+        color = color_map.get(level_upper, cls.RESET)
         bold = cls.BOLD if level_upper in ["ERROR", "FATAL"] else ""
         
         timestamp = datetime.now().strftime("%H:%M:%S") + " " if cls._show_timestamp else ""
         
         # Record messages for summary (excluding DEBUG)
-        if level_upper == "WARNING": cls.warnings.append(message)
-        elif level_upper == "ERROR": cls.errors.append(message)
-        elif level_upper == "SUCCESS": cls.successes.append(message)
-        elif level_upper == "INFO": cls.info.append(message)
-            
-        output = f"{timestamp}{bold}{color}{symbol} {message}{reset}\n"
+        clean_msg = cls.clean_message(message)
+        if level_upper == "WARNING": cls.warnings.append(clean_msg)
+        elif level_upper == "ERROR": cls.errors.append(clean_msg)
+        elif level_upper == "SUCCESS": cls.successes.append(clean_msg)
+        elif level_upper == "INFO": cls.info.append(clean_msg)
+
+        formatted = f"{symbol} {clean_msg}"
+        if cls._use_color:
+            formatted = cls.colorize(formatted, color)
+            if bold:
+                formatted = f"{cls.BOLD}{formatted}{cls.RESET}"
+        output = f"{timestamp}{formatted}\n"
         sys.stdout.write(output)
         sys.stdout.flush()
         
         if level_upper == "FATAL":
-            cls.fancy_summary("Fatal Error", message, is_error=True)
+            cls.fancy_summary("Fatal Error", clean_msg, is_error=True)
             sys.exit(1)
             
     @classmethod
@@ -509,8 +542,9 @@ class OutputManager:
                     filled_length = int(bar_length * cls._progress_current // cls._progress_total)
                     bar = '█' * filled_length + '-' * (bar_length - filled_length)
                     # Use \r to return cursor to start of line
-                    output = f'\r{cls.CYAN}{cls.SYMBOLS["STATUS"]} {message} [{bar}] {percent}%{cls.RESET}'
-                    sys.stdout.write(output)
+                    prefix = cls.colorize(f"{cls.SYMBOLS['STATUS']} {message}", cls.CYAN) if cls._use_color else f"{cls.SYMBOLS['STATUS']} {message}"
+                    bar_output = f"[{bar}] {percent}%"
+                    sys.stdout.write(f"\r{prefix} {bar_output}")
                     sys.stdout.flush()
                     time.sleep(0.1)
                     if cls._progress_current >= cls._progress_total:
@@ -518,8 +552,9 @@ class OutputManager:
                 # Final update to show 100% if needed
                 percent = 100
                 bar = '█' * bar_length
-                output = f'\r{cls.CYAN}{cls.SYMBOLS["STATUS"]} {message} [{bar}] {percent}%{cls.RESET}'
-                sys.stdout.write(output)
+                prefix = cls.colorize(f"{cls.SYMBOLS['STATUS']} {message}", cls.CYAN) if cls._use_color else f"{cls.SYMBOLS['STATUS']} {message}"
+                bar_output = f"[{bar}] {percent}%"
+                sys.stdout.write(f"\r{prefix} {bar_output}")
                 sys.stdout.flush()
         else:
             # --- Spinner Animation --- 
@@ -528,8 +563,8 @@ class OutputManager:
                 i = 0
                 while not cls._stop_animation:
                     # Use \r to return cursor to start of line
-                    output = f'\r{cls.CYAN}{cls.SYMBOLS["STATUS"]} {message} {spin_chars[i % len(spin_chars)]}{cls.RESET}'
-                    sys.stdout.write(output)
+                    prefix = cls.colorize(f"{cls.SYMBOLS['STATUS']} {message}", cls.CYAN) if cls._use_color else f"{cls.SYMBOLS['STATUS']} {message}"
+                    sys.stdout.write(f"\r{prefix} {spin_chars[i % len(spin_chars)]}")
                     sys.stdout.flush()
                     i += 1
                     time.sleep(0.1)
@@ -585,29 +620,34 @@ class OutputManager:
             max_len = max(max_len, len(clean_line))
             
         border_color = cls.RED if is_error else cls.GREEN
-        reset = cls.RESET
         bold = cls.BOLD
+        reset = cls.RESET
         
         # Top border with title
-        print(f"{border_color}╔{'═' * (max_len + 2)}╗{reset}")
-        print(f"{border_color}║ {bold}{title.center(max_len)}{reset}{border_color} ║{reset}")
-        print(f"{border_color}╠{'═' * (max_len + 2)}╣{reset}")
+        top = cls.colorize(f"╔{'═' * (max_len + 2)}╗", border_color)
+        middle = cls.colorize(f"║ {bold}{title.center(max_len)}{reset}", border_color) + cls.colorize(" ║", border_color)
+        divider = cls.colorize(f"╠{'═' * (max_len + 2)}╣", border_color)
+        print(top)
+        print(middle)
+        print(divider)
         
         # Content lines
         for line in lines:
             clean_line = re.sub(r'\x1b\[[0-9;]*[mK]', '', line)
             padding = max_len - len(clean_line)
-            print(f"{border_color}║ {reset}{line}{' ' * padding} {border_color}║{reset}")
+            content_line = cls.colorize(f"║ {line}{' ' * padding} ", border_color) + cls.colorize("║", border_color)
+            print(content_line)
             
         # Processing time if provided
         if processing_time is not None:
             time_str = f"Total Time: {processing_time:.2f}s"
             padding = max_len - len(time_str)
-            print(f"{border_color}╠{'═' * (max_len + 2)}╣{reset}")
-            print(f"{border_color}║ {cls.GRAY}{time_str}{' ' * padding} {reset}{border_color}║{reset}")
+            print(cls.colorize(f"╠{'═' * (max_len + 2)}╣", border_color))
+            time_line = cls.colorize(f"║ {cls.GRAY}{time_str}{' ' * padding} ", border_color) + cls.colorize("║", border_color)
+            print(time_line)
         
         # Bottom border
-        print(f"{border_color}╚{'═' * (max_len + 2)}╝{reset}")
+        print(cls.colorize(f"╚{'═' * (max_len + 2)}╝", border_color))
         print() # Add a blank line after the summary
 
     # --- Potential Fixes --- 
@@ -855,7 +895,10 @@ def process_courts_parallel(blue_contours, blue_mask, green_mask, height, width)
         return courts
     
     # For many contours, use multiprocessing
-    OutputManager.log(f"Processing {len(blue_contours)} potential courts with {Config.MultiProcessing.NUM_PROCESSES} processes", "INFO")
+    OutputManager.log(
+        f"Processing {len(blue_contours)} possible courts using {Config.MultiProcessing.NUM_PROCESSES} workers",
+        "INFO",
+    )
     
     # Create a partial function with fixed arguments
     process_func = partial(process_court_contour, blue_mask=blue_mask, green_mask=green_mask, 
@@ -889,7 +932,10 @@ def analyze_people_positions_parallel(people, courts):
         return people_locations
     
     # For many people, use multiprocessing
-    OutputManager.log(f"Analyzing positions of {len(people)} people ({Config.MultiProcessing.NUM_PROCESSES} processes)", "INFO") # Simplified log
+    OutputManager.log(
+        f"Analyzing {len(people)} people with {Config.MultiProcessing.NUM_PROCESSES} workers",
+        "INFO",
+    )
     
     # Create input data for the pool
     input_data = [(person, courts) for person in people]
@@ -1198,7 +1244,7 @@ def main():
             camera_output_filename = "input.png"
             camera_output_path = os.path.join(camera_output_dir, camera_output_filename)
             
-            OutputManager.log(f"Attempting to capture image to {camera_output_path}", "INFO")
+            OutputManager.log(f"Capturing image to {camera_output_path}", "INFO")
             try:
                 # Ensure output directory exists
                 os.makedirs(camera_output_dir, exist_ok=True)
@@ -1213,17 +1259,17 @@ def main():
                     )
                 
                 if capture_success:
-                    OutputManager.log("Image captured successfully from camera.", "SUCCESS")
+                    OutputManager.log("Captured image from camera", "SUCCESS")
                     input_path = camera_output_path # Update input path to the captured image
                 else:
-                    OutputManager.log("Failed to capture image from camera. Trying default input.", "ERROR")
+                    OutputManager.log("Camera capture failed; using default image", "ERROR")
                     # input_path remains Config.Paths.input_path()
             except Exception as cam_e:
-                OutputManager.log(f"Error during camera capture: {str(cam_e)}", "ERROR")
-                OutputManager.log("Falling back to default input image.", "WARNING")
+                OutputManager.log(f"Camera capture error: {cam_e}", "ERROR")
+                OutputManager.log("Using default input image", "WARNING")
                 # input_path remains Config.Paths.input_path()
         else:
-            OutputManager.log("Skipping camera capture as per --no-camera flag. Using default input.", "INFO")
+            OutputManager.log("Camera skipped (--no-camera); using default image", "INFO")
             # input_path is already Config.Paths.input_path()
         # === End Camera Logic ===
 
@@ -1234,9 +1280,9 @@ def main():
             if input_path == Config.Paths.input_path():
                 try:
                     os.makedirs(os.path.dirname(input_path), exist_ok=True)
-                    OutputManager.log(f"Created images directory at {os.path.dirname(input_path)}", "INFO")
+                    OutputManager.log(f"Created images dir {os.path.dirname(input_path)}", "INFO")
                 except Exception as e:
-                    OutputManager.log(f"Cannot create images directory: {str(e)}", "ERROR")
+                    OutputManager.log(f"Cannot create images dir: {e}", "ERROR")
             
             # Load the image
             OutputManager.status("Loading image")
@@ -1244,11 +1290,11 @@ def main():
             
             # Check image loaded successfully
             if image is not None:
-                OutputManager.log(f"Image loaded successfully: {image.shape[1]}x{image.shape[0]} pixels", "SUCCESS")
+                OutputManager.log(f"Loaded image {image.shape[1]}x{image.shape[0]}", "SUCCESS")
                 if Config.Output.EXTRA_VERBOSE:
-                    OutputManager.log(f"Image type: {image.dtype}, channels: {image.shape[2]}", "INFO")
+                    OutputManager.log(f"Image type {image.dtype}, channels {image.shape[2]}", "INFO")
             else:
-                OutputManager.log(f"Unable to open the image at {input_path}", "ERROR")
+                OutputManager.log(f"Cannot open image {input_path}", "ERROR")
                 # Show final summary with error and exit
                 processing_time = time.time() - start_time
                 final_summary = OutputManager.create_final_summary(
@@ -1261,7 +1307,7 @@ def main():
                 print_error_summary(final_summary)
                 return 1
         except Exception as e:
-            OutputManager.log(f"Problem loading the image: {str(e)}", "ERROR")
+            OutputManager.log(f"Error loading image: {e}", "ERROR")
             processing_time = time.time() - start_time
             final_summary = OutputManager.create_final_summary(
                 people_count=None, 
@@ -1278,11 +1324,11 @@ def main():
             if Config.DEBUG_MODE:
                 debug_folder = Config.Paths.debug_dir()
                 os.makedirs(debug_folder, exist_ok=True)
-                OutputManager.log(f"Debug folder created at {debug_folder}", "DEBUG")
+                OutputManager.log(f"Debug folder: {debug_folder}", "DEBUG")
             else:
                 debug_folder = None
         except Exception as e:
-            OutputManager.log(f"Can't create debug folder: {str(e)}", "WARNING")
+            OutputManager.log(f"Could not create debug folder: {e}", "WARNING")
             debug_folder = None  # Set to None to prevent further debug saves
             # Continue execution even if debug folder can't be created
         
@@ -1295,7 +1341,10 @@ def main():
             green_mask = create_green_mask(image)
             # OutputManager.log("Court colors analyzed", "SUCCESS") # Removed
             if Config.Output.EXTRA_VERBOSE:
-                OutputManager.log(f"Blue mask: {np.count_nonzero(blue_mask)} pixels, Green mask: {np.count_nonzero(green_mask)} pixels", "INFO")
+                OutputManager.log(
+                    f"Blue mask {np.count_nonzero(blue_mask)}px, green mask {np.count_nonzero(green_mask)}px",
+                    "INFO",
+                )
             
             # Process the raw blue mask to avoid connecting unrelated areas like the sky
             blue_mask_raw = blue_mask.copy()
@@ -1310,7 +1359,10 @@ def main():
             # OutputManager.status("Processing court regions") # Removed
             num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(blue_mask_raw, connectivity=8)
             if Config.Output.EXTRA_VERBOSE:
-                 OutputManager.log(f"Found {num_labels-1} initial connected blue regions", "DEBUG")
+                OutputManager.log(
+                    f"Initial connected blue regions: {num_labels-1}",
+                    "DEBUG",
+                )
             
             # For each blue region, check if there's green nearby
             filtered_court_mask = np.zeros_like(court_mask)
@@ -1338,7 +1390,10 @@ def main():
                     filtered_court_mask[region > 0] = court_mask[region > 0]
                     valid_regions += 1
                     if Config.Output.EXTRA_VERBOSE:
-                        OutputManager.log(f"Region {i}: area={area}, green nearby={green_nearby_pixels} - likely court", "DEBUG")
+                        OutputManager.log(
+                            f"Region {i}: area {area}, nearby green {green_nearby_pixels} -> likely court",
+                            "DEBUG",
+                        )
             
             # OutputManager.log(f"Court regions processed: {valid_regions} valid regions found", "SUCCESS") # Removed
             
@@ -1354,7 +1409,7 @@ def main():
             valid_regions = 0 # Ensure this is defined
 
         if Config.Output.EXTRA_VERBOSE:
-            OutputManager.log(f"{valid_regions} valid blue regions kept after filtering.", "INFO")
+            OutputManager.log(f"Valid blue regions kept: {valid_regions}", "INFO")
 
         # Save raw masks for debugging
         if debug_folder and Config.DEBUG_MODE:
@@ -1362,9 +1417,9 @@ def main():
                 cv2.imwrite(os.path.join(debug_folder, "blue_mask_raw.png"), blue_mask_raw)
                 cv2.imwrite(os.path.join(debug_folder, "green_mask.png"), green_mask)
                 cv2.imwrite(os.path.join(debug_folder, "filtered_court_mask.png"), court_mask * 255)
-                OutputManager.log("Debug masks saved", "DEBUG")
+                OutputManager.log("Saved debug masks", "DEBUG")
             except Exception as e:
-                OutputManager.log(f"Couldn't save debug masks: {str(e)}", "WARNING")
+                OutputManager.log(f"Could not save debug masks: {e}", "WARNING")
         
         # Create colored visualization of masks
         try:
@@ -1377,7 +1432,7 @@ def main():
             filtered_blue[court_mask > 0] = [255, 127, 0]  # Bright blue for valid courts
             cv2.addWeighted(court_mask_viz, 1, filtered_blue, 0.7, 0, court_mask_viz)
         except Exception as e:
-            OutputManager.log(f"Error creating court visualization: {str(e)}", "WARNING")
+            OutputManager.log(f"Court visualization error: {e}", "WARNING")
             court_mask_viz = image.copy()  # Use original image as fallback
         
         # Assign court numbers to each separate blue region
@@ -1387,17 +1442,20 @@ def main():
             
             # Output appropriate message based on court detection
             if len(courts) == 0:
-                OutputManager.log("No tennis courts found in the image", "WARNING")
+                OutputManager.log("No courts found", "WARNING")
             else:
-                OutputManager.log(f"Found {len(courts)} tennis court{'s' if len(courts) > 1 else ''}", "SUCCESS")
+                OutputManager.log(f"Found {len(courts)} court{'s' if len(courts) > 1 else ''}", "SUCCESS")
                 if Config.Output.EXTRA_VERBOSE:
                     # Log details of each court
                     for i, court in enumerate(courts):
                         cx, cy = court['centroid']
                         area = court['area']
-                        OutputManager.log(f"Court {i+1}: center=({int(cx)}, {int(cy)}), area={area:.1f} pixels", "DEBUG")
+                        OutputManager.log(
+                            f"Court {i+1}: center ({int(cx)}, {int(cy)}), area {area:.1f}px",
+                            "DEBUG",
+                        )
         except Exception as e:
-            OutputManager.log(f"Error identifying courts: {str(e)}", "ERROR")
+            OutputManager.log(f"Court identification error: {e}", "ERROR")
             # Create fallback empty data
             courts = []
             court_numbers_mask = np.zeros_like(court_mask)
@@ -1445,9 +1503,9 @@ def main():
         if debug_folder and Config.DEBUG_MODE:
             try:
                 cv2.imwrite(os.path.join(debug_folder, "courts_numbered.png"), court_viz)
-                OutputManager.log("Court visualization saved", "DEBUG")
+                OutputManager.log("Saved court visualization", "DEBUG")
             except Exception as e:
-                OutputManager.log(f"Couldn't save court visualization: {str(e)}", "WARNING")
+                OutputManager.log(f"Could not save court visualization: {e}", "WARNING")
         
         # Create a semi-transparent overlay of the masks on the original image
         try:
@@ -1456,7 +1514,7 @@ def main():
             # Apply the colored masks with transparency
             cv2.addWeighted(court_mask_viz, alpha, mask_overlay, 1 - alpha, 0, mask_overlay)
         except Exception as e:
-            OutputManager.log(f"Error creating mask overlay: {str(e)}", "WARNING")
+            OutputManager.log(f"Mask overlay error: {e}", "WARNING")
             mask_overlay = image.copy()  # Use original image as fallback
         
         # Detect people
@@ -1479,7 +1537,7 @@ def main():
             
             # Get the model name from config and download if needed
             model_name = Config.Model.NAME
-            OutputManager.log(f"Using model: {model_name}", "INFO")
+            OutputManager.log(f"Using model {model_name}", "INFO")
             
             # Check if SSL verification should be disabled
             disable_ssl = False
@@ -1537,7 +1595,7 @@ def main():
                         model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path, verbose=False)
                 
                 if model is not None:
-                    OutputManager.log(f"Model {Config.Model.NAME} loaded successfully", "SUCCESS")
+                    OutputManager.log(f"Loaded model {Config.Model.NAME}", "SUCCESS")
                 else:
                     # This case should ideally be caught earlier, but adding safeguard
                     raise Exception(f"Model {Config.Model.NAME} could not be loaded despite successful download/find.")
@@ -1554,14 +1612,14 @@ def main():
                              model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path, verbose=False, force_reload=True)
                         ssl._create_default_https_context = original_ssl_context
                         if model is not None:
-                             OutputManager.log(f"Model {Config.Model.NAME} reloaded successfully with SSL disabled for hub.", "SUCCESS")
+                             OutputManager.log(f"Reloaded {Config.Model.NAME} with SSL disabled", "SUCCESS")
                         else: raise Exception("SSL Retry load returned None")
                     except Exception as e_ssl_retry:
                         ssl._create_default_https_context = original_ssl_context # Restore context
-                        OutputManager.log(f"SSL retry failed: {str(e_ssl_retry)}", "ERROR")
+                        OutputManager.log(f"SSL retry failed: {e_ssl_retry}", "ERROR")
                         raise e # Re-raise original error
                 else:
-                    OutputManager.log(f"Error loading model {Config.Model.NAME}: {str(e)}", "ERROR")
+                    OutputManager.log(f"Error loading model {Config.Model.NAME}: {e}", "ERROR")
                     # Attempt to create a summary and exit
                     processing_time = time.time() - start_time
                     final_summary_str = OutputManager.create_final_summary(None, {}, None, processing_time, len(courts) if 'courts' in locals() else 0)
@@ -1604,7 +1662,7 @@ def main():
 
                 except RuntimeError as e:
                     if "out of memory" in str(e).lower():
-                        OutputManager.log("CUDA out of memory, trying with smaller image size for detection.", "WARNING")
+                        OutputManager.log("CUDA out of memory; trying smaller image", "WARNING")
                         scale_factor = 0.5  # Scale to 50%
                         small_img_width = int(image.shape[1] * scale_factor)
                         small_img_height = int(image.shape[0] * scale_factor)
@@ -1616,7 +1674,10 @@ def main():
                                 pred_results = model.predict(small_img, classes=Config.Model.CLASSES, conf=Config.Model.CONFIDENCE, verbose=False)
                             elif model:
                                 pred_results = model(small_img)
-                        OutputManager.log(f"Used scaled image ({small_img.shape[1]}x{small_img.shape[0]}) for detection", "INFO")
+                        OutputManager.log(
+                            f"Used scaled image {small_img.shape[1]}x{small_img.shape[0]} for detection",
+                            "INFO",
+                        )
                     else:
                         OutputManager.log(f"Runtime error during prediction: {str(e)}", "ERROR")
                         raise e # Re-raise other runtime errors
@@ -1847,9 +1908,9 @@ def main():
                                Config.Visual.TEXT_COLOR, 
                                Config.Visual.TEXT_THICKNESS)
             
-            OutputManager.log("Output image generated", "SUCCESS")
+            OutputManager.log("Generated output image", "SUCCESS")
         except Exception as e:
-            OutputManager.log(f"Error creating output image: {str(e)}", "ERROR")
+            OutputManager.log(f"Error creating output image: {e}", "ERROR")
             output_image = image.copy()  # Use original image as fallback
         
         # Save the final output image
@@ -1862,14 +1923,14 @@ def main():
             if not os.path.exists(output_dir):
                 try:
                     os.makedirs(output_dir, exist_ok=True)
-                    OutputManager.log(f"Created output directory at {output_dir}", "INFO")
+                    OutputManager.log(f"Created output dir {output_dir}", "INFO")
                 except Exception as e:
-                    OutputManager.log(f"Cannot create output directory: {str(e)}", "ERROR")
+                    OutputManager.log(f"Cannot create output dir: {e}", "ERROR")
             
             cv2.imwrite(output_path, output_image)
-            OutputManager.log(f"Output image saved successfully to {output_path}", "SUCCESS")
+            OutputManager.log(f"Saved output image to {output_path}", "SUCCESS")
         except Exception as e:
-            OutputManager.log(f"Error saving output image: {str(e)}", "ERROR")
+            OutputManager.log(f"Error saving output image: {e}", "ERROR")
             output_path = None
         
         # Create the adaptive final summary
@@ -1971,18 +2032,18 @@ def download_yolo_model(model_name, url=None, disable_ssl_verify=False):
             existing_models.sort()
             fallback_model_name = os.path.splitext(existing_models[0])[0]
             fallback_model_path = os.path.join(models_dir, existing_models[0])
-            OutputManager.log(f"Using first available model found: {existing_models[0]}", "INFO")
+            OutputManager.log(f"Using model {existing_models[0]}", "INFO")
             # Update Config to reflect the model being used (important for later logic)
             Config.Model.NAME = fallback_model_name 
             return fallback_model_path
         else:
-            OutputManager.log("No existing models found in models/ directory.", "INFO")
+            OutputManager.log("No models found locally", "INFO")
     except OSError as e:
         OutputManager.log(f"Could not scan models directory: {e}", "WARNING")
         # Continue to download attempt
 
     # Proceed to download if no local model is found or used
-    OutputManager.log(f"Attempting to download model: {model_name}", "INFO")
+    OutputManager.log(f"Downloading model {model_name}", "INFO")
     
     # Get URL if not provided
     if url is None:
