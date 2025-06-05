@@ -99,6 +99,9 @@ class Config:
         MAX_ASPECT_RATIO = 4.0       # Increased from 3.0 to allow wider courts
         MIN_BLUE_RATIO = 0.2         # Reduced from 0.3 to be more lenient
         MIN_GREEN_RATIO = 0.02       # Reduced from 0.05 to be more lenient
+
+    # Saved court positions
+    COURT_POSITIONS = []            # Filled after detection, loaded from config
     
     # Morphological operation settings
     class Morphology:
@@ -662,6 +665,10 @@ if os.path.exists(CONFIG_FILE):
             if 'MultiProcessing' in _loaded_config:
                 Config.MultiProcessing.ENABLED = _loaded_config['MultiProcessing'].get('ENABLED', Config.MultiProcessing.ENABLED)
                 Config.MultiProcessing.NUM_PROCESSES = _loaded_config['MultiProcessing'].get('NUM_PROCESSES', Config.MultiProcessing.NUM_PROCESSES)
+
+            # Pre-detected court positions
+            if 'CourtPositions' in _loaded_config:
+                Config.COURT_POSITIONS = _loaded_config.get('CourtPositions', [])
 
             # Configure OutputManager AFTER loading config
             OutputManager.configure(_loaded_config)
@@ -1288,70 +1295,98 @@ def main():
         
         # Detect tennis courts
         t_start_court = time.time() # Start timing for court detection
-        try:
-            OutputManager.status("Finding courts...") # Consolidated status
+
+        if Config.COURT_POSITIONS:
+            OutputManager.log("Using saved court positions from config", "INFO")
+            height, width = image.shape[:2]
+            court_numbers_mask = np.zeros((height, width), dtype=np.uint8)
+            courts = []
+            for idx, bbox in enumerate(Config.COURT_POSITIONS):
+                x, y, w, h = bbox
+                cv2.rectangle(court_numbers_mask, (x, y), (x + w, y + h), idx + 1, -1)
+                approx = np.array([[[x, y]], [[x + w, y]], [[x + w, y + h]], [[x, y + h]]], dtype=np.int32)
+                courts.append({
+                    'court_number': idx + 1,
+                    'bbox': (x, y, w, h),
+                    'centroid': (x + w / 2, y + h / 2),
+                    'approx': approx,
+                    'contour': approx,
+                    'hull': approx,
+                    'blue_ratio': 1.0,
+                    'green_ratio': 0.0,
+                    'blue_mask': np.zeros((height, width), dtype=np.uint8),
+                    'green_mask': np.zeros((height, width), dtype=np.uint8),
+                    'area': w * h,
+                    'blue_pixels': w * h,
+                    'green_pixels': 0
+                })
+            court_mask_viz = np.zeros((height, width, 3), dtype=np.uint8)
+            duration_court_detection = 0.0
+        else:
+            try:
+                OutputManager.status("Finding courts...") # Consolidated status
             # OutputManager.status("Analyzing court colors") # Removed
-            blue_mask = create_blue_mask(image)
-            green_mask = create_green_mask(image)
-            # OutputManager.log("Court colors analyzed", "SUCCESS") # Removed
-            if Config.Output.EXTRA_VERBOSE:
-                OutputManager.log(f"Blue mask: {np.count_nonzero(blue_mask)} pixels, Green mask: {np.count_nonzero(green_mask)} pixels", "INFO")
-            
-            # Process the raw blue mask to avoid connecting unrelated areas like the sky
-            blue_mask_raw = blue_mask.copy()
-            
-            # Create court mask where green overrides blue
-            height, width = image.shape[:2]
-            court_mask = np.zeros((height, width), dtype=np.uint8)
-            court_mask[blue_mask_raw > 0] = 1  # Blue areas
-            court_mask[green_mask > 0] = 0     # Green areas override blue
-            
-            # Filter out blue regions that don't have any green nearby (like sky)
-            # OutputManager.status("Processing court regions") # Removed
-            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(blue_mask_raw, connectivity=8)
-            if Config.Output.EXTRA_VERBOSE:
-                 OutputManager.log(f"Found {num_labels-1} initial connected blue regions", "DEBUG")
-            
-            # For each blue region, check if there's green nearby
-            filtered_court_mask = np.zeros_like(court_mask)
-            valid_regions = 0
-            
-            for i in range(1, num_labels):
-                region = (labels == i).astype(np.uint8)
-                area = stats[i, cv2.CC_STAT_AREA]
+                blue_mask = create_blue_mask(image)
+                green_mask = create_green_mask(image)
+                # OutputManager.log("Court colors analyzed", "SUCCESS") # Removed
+                if Config.Output.EXTRA_VERBOSE:
+                    OutputManager.log(f"Blue mask: {np.count_nonzero(blue_mask)} pixels, Green mask: {np.count_nonzero(green_mask)} pixels", "INFO")
                 
-                # Skip very small regions
-                if area < Config.Court.MIN_AREA:
-                    continue
+                # Process the raw blue mask to avoid connecting unrelated areas like the sky
+                blue_mask_raw = blue_mask.copy()
                 
-                # Dilate the region to check for nearby green
-                kernel = np.ones((15, 15), np.uint8)
-                dilated_region = cv2.dilate(region, kernel, iterations=1)
+                # Create court mask where green overrides blue
+                height, width = image.shape[:2]
+                court_mask = np.zeros((height, width), dtype=np.uint8)
+                court_mask[blue_mask_raw > 0] = 1  # Blue areas
+                court_mask[green_mask > 0] = 0     # Green areas override blue
                 
-                # Check if there's green nearby this blue region
-                green_nearby = cv2.bitwise_and(green_mask, dilated_region)
-                green_nearby_pixels = cv2.countNonZero(green_nearby)
+                # Filter out blue regions that don't have any green nearby (like sky)
+                # OutputManager.status("Processing court regions") # Removed
+                num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(blue_mask_raw, connectivity=8)
+                if Config.Output.EXTRA_VERBOSE:
+                     OutputManager.log(f"Found {num_labels-1} initial connected blue regions", "DEBUG")
                 
-                # Only keep blue regions that have at least some green nearby
-                if green_nearby_pixels > 30:  # Reduced from 50 to be more lenient
-                    # This is likely a court (not sky) - keep it
-                    filtered_court_mask[region > 0] = court_mask[region > 0]
-                    valid_regions += 1
-                    if Config.Output.EXTRA_VERBOSE:
-                        OutputManager.log(f"Region {i}: area={area}, green nearby={green_nearby_pixels} - likely court", "DEBUG")
-            
-            # OutputManager.log(f"Court regions processed: {valid_regions} valid regions found", "SUCCESS") # Removed
-            
-            # Use the filtered court mask for further processing
-            court_mask = filtered_court_mask
-        except Exception as e:
-            OutputManager.log(f"Error processing court colors/regions: {str(e)}", "ERROR")
-            # Continue with blank masks as a fallback
-            height, width = image.shape[:2]
-            blue_mask_raw = np.zeros((height, width), dtype=np.uint8)
-            green_mask = np.zeros((height, width), dtype=np.uint8)
-            court_mask = np.zeros((height, width), dtype=np.uint8)
-            valid_regions = 0 # Ensure this is defined
+                # For each blue region, check if there's green nearby
+                filtered_court_mask = np.zeros_like(court_mask)
+                valid_regions = 0
+                
+                for i in range(1, num_labels):
+                    region = (labels == i).astype(np.uint8)
+                    area = stats[i, cv2.CC_STAT_AREA]
+                    
+                    # Skip very small regions
+                    if area < Config.Court.MIN_AREA:
+                        continue
+                    
+                    # Dilate the region to check for nearby green
+                    kernel = np.ones((15, 15), np.uint8)
+                    dilated_region = cv2.dilate(region, kernel, iterations=1)
+                    
+                    # Check if there's green nearby this blue region
+                    green_nearby = cv2.bitwise_and(green_mask, dilated_region)
+                    green_nearby_pixels = cv2.countNonZero(green_nearby)
+                    
+                    # Only keep blue regions that have at least some green nearby
+                    if green_nearby_pixels > 30:  # Reduced from 50 to be more lenient
+                        # This is likely a court (not sky) - keep it
+                        filtered_court_mask[region > 0] = court_mask[region > 0]
+                        valid_regions += 1
+                        if Config.Output.EXTRA_VERBOSE:
+                            OutputManager.log(f"Region {i}: area={area}, green nearby={green_nearby_pixels} - likely court", "DEBUG")
+                
+                # OutputManager.log(f"Court regions processed: {valid_regions} valid regions found", "SUCCESS") # Removed
+                
+                # Use the filtered court mask for further processing
+                court_mask = filtered_court_mask
+            except Exception as e:
+                OutputManager.log(f"Error processing court colors/regions: {str(e)}", "ERROR")
+                # Continue with blank masks as a fallback
+                height, width = image.shape[:2]
+                blue_mask_raw = np.zeros((height, width), dtype=np.uint8)
+                green_mask = np.zeros((height, width), dtype=np.uint8)
+                court_mask = np.zeros((height, width), dtype=np.uint8)
+                valid_regions = 0 # Ensure this is defined
 
         if Config.Output.EXTRA_VERBOSE:
             OutputManager.log(f"{valid_regions} valid blue regions kept after filtering.", "INFO")
@@ -1401,6 +1436,21 @@ def main():
             # Create fallback empty data
             courts = []
             court_numbers_mask = np.zeros_like(court_mask)
+
+        if not Config.COURT_POSITIONS and courts:
+            Config.COURT_POSITIONS = [c['bbox'] for c in courts]
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    cfg = json.load(f)
+            except Exception:
+                cfg = {}
+            cfg['CourtPositions'] = Config.COURT_POSITIONS
+            try:
+                with open(CONFIG_FILE, 'w') as f:
+                    json.dump(cfg, f, indent=4)
+                OutputManager.log("Saved court positions to config", "DEBUG")
+            except Exception as e:
+                OutputManager.log(f"Couldn't save court positions: {str(e)}", "WARNING")
         
         # Create a color-coded court mask for visualization
         try:
@@ -1458,7 +1508,9 @@ def main():
         except Exception as e:
             OutputManager.log(f"Error creating mask overlay: {str(e)}", "WARNING")
             mask_overlay = image.copy()  # Use original image as fallback
-        
+
+        duration_court_detection = time.time() - t_start_court
+
         # Detect people
         people = []
         model_path = None # Initialize model_path
