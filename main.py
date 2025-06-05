@@ -2086,9 +2086,13 @@ def download_yolo_model(model_name, url=None, disable_ssl_verify=False):
     
     except Exception as e:
         # Clean up any partially downloaded file if an unexpected error occurred
-        if os.path.exists(model_path) and "downloaded successfully" not in OutputManager.info[-1]:
-             try: os.remove(model_path) 
-             except: pass
+        if os.path.exists(model_path):
+            last_info = OutputManager.info[-1] if OutputManager.info else ""
+            if "downloaded successfully" not in last_info:
+                try:
+                    os.remove(model_path)
+                except Exception:
+                    pass
         
         # Log the error and re-raise
         OutputManager.log(f"Failed to download {model_name}: {str(e)}", "FATAL")
