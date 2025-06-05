@@ -279,6 +279,22 @@ class OutputManager:
     BOLD = "\033[1m"
     UNDERLINE = "\033[4m"
     RESET = "\033[0m"
+
+    @classmethod
+    def supports_color(cls):
+        """Return True if the running environment supports color output."""
+        if not sys.stdout.isatty():
+            return False
+        if os.environ.get("NO_COLOR"):
+            return False
+        return True
+
+    @classmethod
+    def colorize(cls, text, color):
+        """Wrap text with ANSI color codes if enabled."""
+        if cls._use_color:
+            return f"{color}{text}{cls.RESET}"
+        return text
     
     # Symbols for different message types
     SYMBOLS = {
@@ -313,7 +329,7 @@ class OutputManager:
     _super_quiet = Config.Output.SUPER_QUIET
     _summary_only = Config.Output.SUMMARY_ONLY
     _extra_verbose = Config.Output.EXTRA_VERBOSE
-    _use_color = Config.Output.USE_COLOR_OUTPUT
+    _use_color = Config.Output.USE_COLOR_OUTPUT and sys.stdout.isatty() and not os.environ.get("NO_COLOR")
     _show_timestamp = Config.Output.SHOW_TIMESTAMP
 
     @classmethod
@@ -324,6 +340,7 @@ class OutputManager:
         cls._super_quiet = output_config.get('SUPER_QUIET', Config.Output.SUPER_QUIET)
         cls._summary_only = output_config.get('SUMMARY_ONLY', Config.Output.SUMMARY_ONLY)
         cls._extra_verbose = output_config.get('EXTRA_VERBOSE', Config.Output.EXTRA_VERBOSE)
+        cls._use_color = Config.Output.USE_COLOR_OUTPUT and sys.stdout.isatty() and not os.environ.get("NO_COLOR")
         # Keep color and timestamp from default class config for now
         # Could add these to config.json if needed
 
@@ -381,14 +398,13 @@ class OutputManager:
             "WARNING": cls.YELLOW,
             "ERROR": cls.RED,
             "DEBUG": cls.GRAY,
-            "FATAL": cls.RED, # Fatal errors use red
-            "STATUS": cls.CYAN # Status messages
+            "FATAL": cls.RED,  # Fatal errors use red
+            "STATUS": cls.CYAN,  # Status messages
         }
         
         level_upper = level.upper()
         symbol = cls.SYMBOLS.get(level_upper, "")
-        color = color_map.get(level_upper, cls.RESET) if cls._use_color else ""
-        reset = cls.RESET if cls._use_color else ""
+        color = color_map.get(level_upper, cls.RESET)
         bold = cls.BOLD if level_upper in ["ERROR", "FATAL"] else ""
         
         timestamp = datetime.now().strftime("%H:%M:%S") + " " if cls._show_timestamp else ""
@@ -399,7 +415,12 @@ class OutputManager:
         elif level_upper == "SUCCESS": cls.successes.append(message)
         elif level_upper == "INFO": cls.info.append(message)
             
-        output = f"{timestamp}{bold}{color}{symbol} {message}{reset}\n"
+        formatted = f"{symbol} {message}"
+        if cls._use_color:
+            formatted = cls.colorize(formatted, color)
+            if bold:
+                formatted = f"{cls.BOLD}{formatted}{cls.RESET}"
+        output = f"{timestamp}{formatted}\n"
         sys.stdout.write(output)
         sys.stdout.flush()
         
@@ -509,8 +530,9 @@ class OutputManager:
                     filled_length = int(bar_length * cls._progress_current // cls._progress_total)
                     bar = '█' * filled_length + '-' * (bar_length - filled_length)
                     # Use \r to return cursor to start of line
-                    output = f'\r{cls.CYAN}{cls.SYMBOLS["STATUS"]} {message} [{bar}] {percent}%{cls.RESET}'
-                    sys.stdout.write(output)
+                    prefix = cls.colorize(f"{cls.SYMBOLS['STATUS']} {message}", cls.CYAN) if cls._use_color else f"{cls.SYMBOLS['STATUS']} {message}"
+                    bar_output = f"[{bar}] {percent}%"
+                    sys.stdout.write(f"\r{prefix} {bar_output}")
                     sys.stdout.flush()
                     time.sleep(0.1)
                     if cls._progress_current >= cls._progress_total:
@@ -518,8 +540,9 @@ class OutputManager:
                 # Final update to show 100% if needed
                 percent = 100
                 bar = '█' * bar_length
-                output = f'\r{cls.CYAN}{cls.SYMBOLS["STATUS"]} {message} [{bar}] {percent}%{cls.RESET}'
-                sys.stdout.write(output)
+                prefix = cls.colorize(f"{cls.SYMBOLS['STATUS']} {message}", cls.CYAN) if cls._use_color else f"{cls.SYMBOLS['STATUS']} {message}"
+                bar_output = f"[{bar}] {percent}%"
+                sys.stdout.write(f"\r{prefix} {bar_output}")
                 sys.stdout.flush()
         else:
             # --- Spinner Animation --- 
@@ -528,8 +551,8 @@ class OutputManager:
                 i = 0
                 while not cls._stop_animation:
                     # Use \r to return cursor to start of line
-                    output = f'\r{cls.CYAN}{cls.SYMBOLS["STATUS"]} {message} {spin_chars[i % len(spin_chars)]}{cls.RESET}'
-                    sys.stdout.write(output)
+                    prefix = cls.colorize(f"{cls.SYMBOLS['STATUS']} {message}", cls.CYAN) if cls._use_color else f"{cls.SYMBOLS['STATUS']} {message}"
+                    sys.stdout.write(f"\r{prefix} {spin_chars[i % len(spin_chars)]}")
                     sys.stdout.flush()
                     i += 1
                     time.sleep(0.1)
@@ -585,29 +608,34 @@ class OutputManager:
             max_len = max(max_len, len(clean_line))
             
         border_color = cls.RED if is_error else cls.GREEN
-        reset = cls.RESET
         bold = cls.BOLD
+        reset = cls.RESET
         
         # Top border with title
-        print(f"{border_color}╔{'═' * (max_len + 2)}╗{reset}")
-        print(f"{border_color}║ {bold}{title.center(max_len)}{reset}{border_color} ║{reset}")
-        print(f"{border_color}╠{'═' * (max_len + 2)}╣{reset}")
+        top = cls.colorize(f"╔{'═' * (max_len + 2)}╗", border_color)
+        middle = cls.colorize(f"║ {bold}{title.center(max_len)}{reset}", border_color) + cls.colorize(" ║", border_color)
+        divider = cls.colorize(f"╠{'═' * (max_len + 2)}╣", border_color)
+        print(top)
+        print(middle)
+        print(divider)
         
         # Content lines
         for line in lines:
             clean_line = re.sub(r'\x1b\[[0-9;]*[mK]', '', line)
             padding = max_len - len(clean_line)
-            print(f"{border_color}║ {reset}{line}{' ' * padding} {border_color}║{reset}")
+            content_line = cls.colorize(f"║ {line}{' ' * padding} ", border_color) + cls.colorize("║", border_color)
+            print(content_line)
             
         # Processing time if provided
         if processing_time is not None:
             time_str = f"Total Time: {processing_time:.2f}s"
             padding = max_len - len(time_str)
-            print(f"{border_color}╠{'═' * (max_len + 2)}╣{reset}")
-            print(f"{border_color}║ {cls.GRAY}{time_str}{' ' * padding} {reset}{border_color}║{reset}")
+            print(cls.colorize(f"╠{'═' * (max_len + 2)}╣", border_color))
+            time_line = cls.colorize(f"║ {cls.GRAY}{time_str}{' ' * padding} ", border_color) + cls.colorize("║", border_color)
+            print(time_line)
         
         # Bottom border
-        print(f"{border_color}╚{'═' * (max_len + 2)}╝{reset}")
+        print(cls.colorize(f"╚{'═' * (max_len + 2)}╝", border_color))
         print() # Add a blank line after the summary
 
     # --- Potential Fixes --- 
