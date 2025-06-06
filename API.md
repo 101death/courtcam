@@ -61,6 +61,32 @@ Example response:
 
 During automated tests the endpoint returns simplified dummy data to avoid running the heavy computer vision pipeline. This happens when the environment variable `TESTING` is set to `1`.
 
+### `GET /status`
+
+Retrieve basic status information about the host device and camera. This is useful to verify that the Raspberry Pi and its camera are detected correctly.
+
+#### Response JSON
+
+- `os` – Operating system name.
+- `is_raspberry_pi` – `true` if running on a Raspberry Pi.
+- `pi_model` – Model string reported by the Pi, if available.
+- `is_64bit` – `true` if the Python interpreter is 64‑bit.
+- `camera_available` – `true` if a supported camera module is detected.
+- `camera_version` – `1` for legacy Picamera, `2` for Picamera2, or `null` if no camera libraries are available.
+
+### `GET /court_count`
+
+Return only the number of tennis courts detected in the provided image or from the camera.
+
+#### Query Parameters
+
+- `image_path` *(optional)* – Path to an image file to analyze.
+- `use_camera` *(optional)* – Capture a new photo using the Raspberry Pi camera. Returns HTTP 400 if no camera is available.
+
+#### Response JSON
+
+- `total_courts` – Number of detected courts.
+
 ## Usage examples
 
 ### Using `curl`
@@ -68,6 +94,8 @@ During automated tests the endpoint returns simplified dummy data to avoid runni
 ```bash
 curl "http://127.0.0.1:8000/courts?image_path=images/input.png"
 curl "http://127.0.0.1:8000/courts?use_camera=true"  # captures a new photo
+curl "http://127.0.0.1:8000/status"                 # check Pi status
+curl "http://127.0.0.1:8000/court_count"            # number of courts only
 ```
 
 ### Using Python `requests`
@@ -82,6 +110,12 @@ resp = requests.get("http://127.0.0.1:8000/courts", params={"use_camera": "true"
 print(resp.json())
 # If no camera is connected this call returns:
 # {"detail": "No camera detected"}
+
+resp = requests.get("http://127.0.0.1:8000/status")
+print(resp.json())
+
+resp = requests.get("http://127.0.0.1:8000/court_count")
+print(resp.json())
 ```
 
 ### Calling the analysis function directly

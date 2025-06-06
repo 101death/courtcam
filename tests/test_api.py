@@ -23,3 +23,25 @@ def test_courts_endpoint_use_camera_no_device():
     assert response.status_code == 400
     data = response.json()
     assert data['detail'] == 'No camera detected'
+
+
+def test_court_count_endpoint():
+    response = client.get('/court_count')
+    assert response.status_code == 200
+    data = response.json()
+    assert 'total_courts' in data
+    assert isinstance(data['total_courts'], int)
+
+
+def test_court_count_use_camera_no_device():
+    response = client.get('/court_count', params={'use_camera': 'true'})
+    assert response.status_code == 400
+
+
+def test_status_endpoint():
+    response = client.get('/status')
+    assert response.status_code == 200
+    data = response.json()
+    assert 'is_raspberry_pi' in data
+    assert 'camera_available' in data
+
