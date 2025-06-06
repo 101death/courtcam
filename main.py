@@ -1896,7 +1896,7 @@ def main(use_gui_courts=False):
             
             # Get the model name from config and download if needed
             model_name = Config.Model.NAME
-            OutputManager.log(f"Using model {model_name}", "INFO")
+            OutputManager.log(f"Selected model: {model_name}", "INFO")
             
             # Check if SSL verification should be disabled
             disable_ssl = False
@@ -2197,7 +2197,7 @@ def main(use_gui_courts=False):
         
         # Create final output image
         try:
-            OutputManager.status("Creating output image")
+            OutputManager.status("Rendering output image")
             output_image = image.copy()
             
             # Draw court outlines with different colors
@@ -2273,7 +2273,7 @@ def main(use_gui_courts=False):
                                Config.Visual.TEXT_COLOR, 
                                Config.Visual.TEXT_THICKNESS)
             
-            OutputManager.log("Generated output image", "SUCCESS")
+            OutputManager.log("Output image created", "SUCCESS")
         except Exception as e:
             OutputManager.log(f"Error creating output image: {e}", "ERROR")
             output_image = image.copy()  # Use original image as fallback
@@ -2281,7 +2281,7 @@ def main(use_gui_courts=False):
         # Save the final output image
         output_path = Config.Paths.output_path()
         try:
-            OutputManager.status("Saving output image")
+            OutputManager.status("Saving results")
             
             # Ensure output directory exists
             output_dir = os.path.dirname(output_path)
@@ -2293,7 +2293,7 @@ def main(use_gui_courts=False):
                     OutputManager.log(f"Cannot create output dir: {e}", "ERROR")
             
             cv2.imwrite(output_path, output_image)
-            OutputManager.log(f"Saved output image to {output_path}", "SUCCESS")
+            OutputManager.log(f"Results saved to {output_path}", "SUCCESS")
         except Exception as e:
             OutputManager.log(f"Error saving output image: {e}", "ERROR")
             output_path = None
@@ -2385,11 +2385,11 @@ def download_yolo_model(model_name, url=None, disable_ssl_verify=False):
     
     # Check if the specified model exists
     if os.path.exists(model_path):
-        OutputManager.log(f"Using specified model: {model_name}", "SUCCESS")
+        OutputManager.log(f"Model file found: {model_name}.pt", "SUCCESS")
         return model_path
     
     # If specified model not found, check for *any* .pt file in the models directory
-    OutputManager.log(f"Specified model '{model_name}.pt' not found locally.", "WARNING")
+    OutputManager.log(f"Model file '{model_name}.pt' not found locally", "WARNING")
     try:
         existing_models = [f for f in os.listdir(models_dir) if f.endswith('.pt')]
         if existing_models:
@@ -2397,9 +2397,9 @@ def download_yolo_model(model_name, url=None, disable_ssl_verify=False):
             existing_models.sort()
             fallback_model_name = os.path.splitext(existing_models[0])[0]
             fallback_model_path = os.path.join(models_dir, existing_models[0])
-            OutputManager.log(f"Using model {existing_models[0]}", "INFO")
+            OutputManager.log(f"Found local model file {existing_models[0]}", "INFO")
             # Update Config to reflect the model being used (important for later logic)
-            Config.Model.NAME = fallback_model_name 
+            Config.Model.NAME = fallback_model_name
             return fallback_model_path
         else:
             OutputManager.log("No models found locally", "INFO")
