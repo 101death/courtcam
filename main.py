@@ -711,10 +711,21 @@ if os.path.exists(CONFIG_FILE):
 
             # Pre-detected court positions
             if 'CourtPositions' in _loaded_config:
-                Config.COURT_POSITIONS = [
-                    tuple(int(v) for v in bbox)
-                    for bbox in _loaded_config.get('CourtPositions', [])
-                ]
+                Config.COURT_POSITIONS = []
+                for court in _loaded_config.get('CourtPositions', []):
+                    try:
+                        if 'points' in court:
+                            pts = [tuple(int(v) for v in p) for p in court['points']][:8]
+                        else:
+                            pts = [
+                                tuple(int(v) for v in court['top_left']),
+                                tuple(int(v) for v in court['top_right']),
+                                tuple(int(v) for v in court['bottom_right']),
+                                tuple(int(v) for v in court['bottom_left'])
+                            ]
+                        Config.COURT_POSITIONS.append({'points': pts})
+                    except Exception:
+                        continue
 
             # Configure OutputManager AFTER loading config
             OutputManager.configure(_loaded_config)
@@ -729,28 +740,47 @@ else:
 # === End Load Configuration ===
 
 def parse_court_positions_arg(arg):
-    """Parse --court-positions argument into a list of (x, y, w, h) tuples."""
+    """Parse --court-positions argument into a list of court dictionaries."""
     positions = []
     for part in arg.split(';'):
         part = part.strip()
         if not part:
             continue
         nums = [int(n) for n in part.split(',')]
-        if len(nums) != 4:
+        if len(nums) == 16:
+            pts = [(nums[i], nums[i+1]) for i in range(0, 16, 2)]
+        elif len(nums) == 8:
+            pts = [
+                (nums[0], nums[1]),
+                (nums[2], nums[3]),
+                (nums[4], nums[5]),
+                (nums[6], nums[7]),
+            ]
+        elif len(nums) == 4:
+            x, y, w, h = nums
+            pts = [
+                (x, y),
+                (x + w, y),
+                (x + w, y + h),
+                (x, y + h)
+            ]
+        else:
             raise ValueError(f"Invalid court position: '{part}'")
-        positions.append(tuple(nums))
+        positions.append({'points': pts[:8]})
     if not positions:
         raise ValueError("No valid court positions provided")
     return positions
 
 
 def court_positions_defined() -> bool:
-    """Check if court positions contain any non-zero bounding box."""
+    """Check if court positions contain any non-zero coordinates."""
     if not Config.COURT_POSITIONS:
         return False
-    for bbox in Config.COURT_POSITIONS:
-        if any(int(v) != 0 for v in bbox):
-            return True
+    for court in Config.COURT_POSITIONS:
+        pts = court.get('points', [])
+        for p in pts:
+            if any(int(v) != 0 for v in p):
+                return True
     return False
 
 
@@ -828,14 +858,21 @@ def select_court_positions_gui(image, existing=None, max_courts=4):
 
     courts: List[List[Tuple[int, int]]] = []
     if existing:
-        for bbox in existing:
-            x, y, w, h = bbox
-            pts = [
-                (int(x * scale), int(y * scale)),
-                (int((x + w) * scale), int(y * scale)),
-                (int((x + w) * scale), int((y + h) * scale)),
-                (int(x * scale), int((y + h) * scale)),
-            ]
+        for court in existing:
+            try:
+                pts = [
+                    (int(p[0] * scale), int(p[1] * scale)) for p in court['points'][:8]
+                ]
+            except Exception:
+                try:
+                    pts = [
+                        (int(court['top_left'][0] * scale), int(court['top_left'][1] * scale)),
+                        (int(court['top_right'][0] * scale), int(court['top_right'][1] * scale)),
+                        (int(court['bottom_right'][0] * scale), int(court['bottom_right'][1] * scale)),
+                        (int(court['bottom_left'][0] * scale), int(court['bottom_left'][1] * scale)),
+                    ]
+                except Exception:
+                    continue
             courts.append(pts)
             listbox.insert(tk.END, f"Court {len(courts)}")
             canvas.create_polygon(pts, outline="green", fill="", width=2, tags=f"court{len(courts)-1}")
@@ -914,21 +951,13 @@ def select_court_positions_gui(image, existing=None, max_courts=4):
 
     root.mainloop()
 
-    bboxes: List[Tuple[int, int, int, int]] = []
+    courts_out = []
     for pts in courts:
-        xs = [p[0] for p in pts]
-        ys = [p[1] for p in pts]
-        x1, y1 = min(xs), min(ys)
-        x2, y2 = max(xs), max(ys)
-        bboxes.append(
-            (
-                int(x1 / scale),
-                int(y1 / scale),
-                int((x2 - x1) / scale),
-                int((y2 - y1) / scale),
-            )
-        )
-    return bboxes
+        if len(pts) < 4:
+            continue
+        scaled = [[int(p[0] / scale), int(p[1] / scale)] for p in pts[:8]]
+        courts_out.append({'points': scaled})
+    return courts_out
 
 def create_blue_mask(image):
     """Create a mask for blue areas in the image"""
@@ -1471,7 +1500,27 @@ def main(use_gui_courts=False):
             )
             selected = select_court_positions_gui(image, Config.COURT_POSITIONS)
             if selected:
-                Config.COURT_POSITIONS = [tuple(int(v) for v in b) for b in selected]
+                Config.COURT_POSITIONS = []
+                for b in selected:
+                    try:
+                        x, y, w, h = b  # backward compatibility if bbox tuple
+                        pts = [
+                            (x, y),
+                            (x + w, y),
+                            (x + w, y + h),
+                            (x, y + h),
+                        ]
+                    except Exception:
+                        if 'points' in b:
+                            pts = [tuple(p) for p in b['points']][:8]
+                        else:
+                            pts = [
+                                tuple(b['top_left']),
+                                tuple(b['top_right']),
+                                tuple(b['bottom_right']),
+                                tuple(b['bottom_left']),
+                            ]
+                    Config.COURT_POSITIONS.append({'points': pts})
                 try:
                     existing_cfg = {}
                     if os.path.exists(CONFIG_FILE):
@@ -1591,11 +1640,17 @@ def main(use_gui_courts=False):
             court_numbers_mask = np.zeros((height, width), dtype=np.uint8)
             court_mask = np.zeros((height, width), dtype=np.uint8)
             courts = []
-            for idx, bbox in enumerate(Config.COURT_POSITIONS):
-                x, y, w, h = [int(v) for v in bbox]
-                cv2.rectangle(court_numbers_mask, (x, y), (x + w, y + h), idx + 1, -1)
-                cv2.rectangle(court_mask, (x, y), (x + w, y + h), 255, -1)
-                approx = np.array([[[x, y]], [[x + w, y]], [[x + w, y + h]], [[x, y + h]]], dtype=np.int32)
+            for idx, court in enumerate(Config.COURT_POSITIONS):
+                pts = np.array(court.get('points', [])[:8], dtype=np.int32)
+                if len(pts) < 4:
+                    continue
+                cv2.fillPoly(court_numbers_mask, [pts], idx + 1)
+                cv2.fillPoly(court_mask, [pts], 255)
+                xs = pts[:,0]
+                ys = pts[:,1]
+                x, y = int(xs.min()), int(ys.min())
+                w, h = int(xs.max() - xs.min()), int(ys.max() - ys.min())
+                approx = pts.reshape(-1,1,2)
                 courts.append({
                     'court_number': idx + 1,
                     'bbox': (x, y, w, h),
@@ -1731,8 +1786,19 @@ def main(use_gui_courts=False):
                 court_numbers_mask = np.zeros_like(court_mask)
 
         if not court_positions_defined() and courts:
-            # Convert numpy integers to plain Python ints for JSON serialization
-            Config.COURT_POSITIONS = [tuple(int(v) for v in c['bbox']) for c in courts]
+            # Save detected court points for JSON serialization
+            Config.COURT_POSITIONS = []
+            for c in courts:
+                pts = [tuple(map(int, p)) for p in c['approx'].reshape(-1, 2)[:8]]
+                if len(pts) < 4:
+                    x, y, w, h = [int(v) for v in c['bbox']]
+                    pts = [
+                        (x, y),
+                        (x + w, y),
+                        (x + w, y + h),
+                        (x, y + h),
+                    ]
+                Config.COURT_POSITIONS.append({'points': pts})
 
             try:
                 with open(CONFIG_FILE, 'r') as f:
@@ -2708,7 +2774,7 @@ if __name__ == "__main__":
         parser.add_argument(
             "--court-positions",
             type=str,
-            help="Set court positions manually as 'x,y,w,h;x,y,w,h'"
+            help="Set court positions manually as 'x1,y1,...,x8,y8;x1,y1,...'"
         )
         parser.add_argument(
             "--set-courts-gui",
