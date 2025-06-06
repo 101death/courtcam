@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 import cv2
@@ -14,6 +15,13 @@ from main import (
 
 app = FastAPI(title="Tennis Court Availability API",
               description="Check number of courts and players from an image.")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 class CourtStatus(BaseModel):
     total_courts: int
