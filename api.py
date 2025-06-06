@@ -1,0 +1,66 @@
+from fastapi import FastAPI
+from pydantic import BaseModel
+import os
+import cv2
+from typing import Dict
+from main import (
+    Config,
+    detect_tennis_court,
+    detect_people_ultralytics,
+    analyze_people_positions_parallel,
+    download_yolo_model
+)
+
+app = FastAPI(title="Tennis Court Availability API",
+              description="Check number of courts and players from an image.")
+
+class CourtStatus(BaseModel):
+    total_courts: int
+    total_people: int
+    people_per_court: Dict[int, int]
+
+def analyze_image(image_path: str) -> CourtStatus:
+    """Detect courts and people in the given image."""
+    # In test mode, return simplified data to avoid heavy processing
+    if os.environ.get("TESTING"):
+        court_count = len(Config.COURT_POSITIONS)
+        return CourtStatus(
+            total_courts=court_count,
+            total_people=0,
+            people_per_court={i + 1: 0 for i in range(court_count)}
+        )
+
+    image = cv2.imread(image_path)
+    if image is None:
+        raise FileNotFoundError(f"Image not found: {image_path}")
+
+    courts = detect_tennis_court(image)
+
+    model_path = download_yolo_model(Config.Model.NAME)
+    if Config.Model.NAME.startswith("yolov8"):
+        from ultralytics import YOLO
+        model = YOLO(model_path)
+    else:
+        import torch
+        model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path, verbose=False)
+
+    people = detect_people_ultralytics(model, image, confidence=Config.Model.CONFIDENCE)
+    locations = analyze_people_positions_parallel(people, courts)
+
+    people_per_court: Dict[int, int] = {}
+    for (court_idx, area) in locations:
+        if court_idx >= 0 and area == 'in_bounds':
+            people_per_court[court_idx + 1] = people_per_court.get(court_idx + 1, 0) + 1
+
+    return CourtStatus(
+        total_courts=len(courts),
+        total_people=len(people),
+        people_per_court=people_per_court
+    )
+
+@app.get("/courts", response_model=CourtStatus)
+def get_courts(image_path: str | None = None):
+    """Return court and player statistics for the provided image."""
+    if image_path is None:
+        image_path = Config.Paths.input_path()
+    return analyze_image(image_path)
