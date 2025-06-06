@@ -20,6 +20,17 @@ class CourtStatus(BaseModel):
     total_people: int
     people_per_court: Dict[int, int]
 
+class Status(BaseModel):
+    os: str
+    is_raspberry_pi: bool
+    pi_model: str
+    is_64bit: bool
+    camera_available: bool
+    camera_version: int | None
+
+class CourtCount(BaseModel):
+    total_courts: int
+
 def analyze_image(image_path: str) -> CourtStatus:
     """Detect courts and people in the given image."""
     # In test mode, return simplified data to avoid heavy processing
@@ -77,3 +88,31 @@ def get_courts(image_path: str | None = None, use_camera: bool = False):
     elif image_path is None:
         image_path = Config.Paths.input_path()
     return analyze_image(image_path)
+
+
+@app.get("/court_count", response_model=CourtCount)
+def get_court_count(image_path: str | None = None, use_camera: bool = False):
+    """Return only the number of detected courts."""
+    if use_camera:
+        capture_dir = "api_captures"
+        capture_file = "capture.png"
+        success = camera_module.takePhoto(
+            output_dir=capture_dir,
+            output_filename=capture_file,
+            width=Config.Camera.WIDTH,
+            height=Config.Camera.HEIGHT,
+        )
+        if not success:
+            raise HTTPException(status_code=400, detail="No camera detected")
+        image_path = os.path.join(capture_dir, capture_file)
+    elif image_path is None:
+        image_path = Config.Paths.input_path()
+
+    result = analyze_image(image_path)
+    return {"total_courts": result.total_courts}
+
+
+@app.get("/status", response_model=Status)
+def get_status():
+    """Return device and camera status information."""
+    return camera_module.get_device_status()

@@ -6,6 +6,7 @@ import subprocess
 import io
 import re
 import contextlib
+import platform
 from contextlib import redirect_stdout, redirect_stderr
 from datetime import datetime
 
@@ -358,6 +359,18 @@ def takePhoto(output_dir='output', output_filename='input.png', width=1280, heig
     else:
         _log_camera_message("Photo capture failed", "ERROR")
         return False
+
+
+def get_device_status():
+    """Return basic information about the current system and camera."""
+    return {
+        "os": platform.system(),
+        "is_raspberry_pi": IS_RASPBERRY_PI,
+        "pi_model": PI_MODEL,
+        "is_64bit": IS_64BIT,
+        "camera_available": PI_CAMERA_VERSION is not None,
+        "camera_version": PI_CAMERA_VERSION,
+    }
 
 # Example of calling the function (will run when this script is executed directly)
 if __name__ == "__main__":
