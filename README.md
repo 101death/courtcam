@@ -226,3 +226,8 @@ Available resolution shortcuts: VGA, HD, FULL_HD, 3MP, 12MP
 - PyTorch
 - Ultralytics (for YOLOv8)
 - Raspberry Pi Camera module (for Raspberry Pi)
+
+
+## API Usage
+
+See [API.md](API.md) for instructions on using the FastAPI server. In addition to the `/courts` endpoint there are `/status` and `/court_count` endpoints for device info and just the number of courts.
