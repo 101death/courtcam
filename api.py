@@ -1,8 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import os
 import cv2
 from typing import Dict
+import camera as camera_module
 from main import (
     Config,
     detect_tennis_court,
@@ -59,8 +60,20 @@ def analyze_image(image_path: str) -> CourtStatus:
     )
 
 @app.get("/courts", response_model=CourtStatus)
-def get_courts(image_path: str | None = None):
-    """Return court and player statistics for the provided image."""
-    if image_path is None:
+def get_courts(image_path: str | None = None, use_camera: bool = False):
+    """Return court and player statistics for the provided image or camera."""
+    if use_camera:
+        capture_dir = "api_captures"
+        capture_file = "capture.png"
+        success = camera_module.takePhoto(
+            output_dir=capture_dir,
+            output_filename=capture_file,
+            width=Config.Camera.WIDTH,
+            height=Config.Camera.HEIGHT,
+        )
+        if not success:
+            raise HTTPException(status_code=400, detail="No camera detected")
+        image_path = os.path.join(capture_dir, capture_file)
+    elif image_path is None:
         image_path = Config.Paths.input_path()
     return analyze_image(image_path)

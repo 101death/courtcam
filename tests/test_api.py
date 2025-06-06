@@ -16,3 +16,10 @@ def test_courts_endpoint():
     assert 'total_people' in data
     assert 'people_per_court' in data
     assert isinstance(data['people_per_court'], dict)
+
+
+def test_courts_endpoint_use_camera_no_device():
+    response = client.get('/courts', params={'use_camera': 'true'})
+    assert response.status_code == 400
+    data = response.json()
+    assert data['detail'] == 'No camera detected'
