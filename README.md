@@ -166,7 +166,7 @@ python main.py [options]
 - `--quiet`: Reduce console output
 - `--show-labels`: Show detailed labels on output image
 - `--processes NUM`: Set number of processes for multiprocessing
-- `--court-positions LIST`: Manually set court bounding boxes as `x,y,w,h` pairs separated by semicolons
+- `--court-positions LIST`: Manually set court corners as `x1,y1,...,x8,y8` pairs separated by semicolons
 - `--set-courts-gui`: Launch a Tkinter-based editor. A sidebar shows permanent
   instructions. Use the `+` and `-` buttons to add or remove courts. Points are
   placed by clicking on the image and the shape automatically closes when the
