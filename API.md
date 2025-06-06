@@ -1,12 +1,11 @@
-# API Documentation
+# Tennis Court Availability API
 
-This project includes a small FastAPI application in `api.py` for retrieving tennis court statistics.
+This FastAPI server analyzes images of tennis courts and reports how many courts are present and how many people are playing on each court. It powers the `courtcam` project but can also be used as a standalone service.
 
-codex/create-tennis-courts-api-with-documentation
-## Setup
+## Installation
 
-Create a virtual environment and install the required packages (which include
-`uvicorn`):
+1. Clone the repository and change into the project directory.
+2. Create a Python virtual environment and install all dependencies:
 
 ```bash
 python3 -m venv venv
@@ -14,19 +13,35 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Running the server
+Alternatively you can run the provided `setup.sh` script which installs the requirements and prepares the `config.json` file interactively.
 
-Use Uvicorn to start the API in development mode:
+## Running the API server
+
+Start the development server with Uvicorn:
 
 ```bash
 uvicorn api:app --reload
 ```
 
-## Endpoints
+The API will be available at `http://127.0.0.1:8000`. When running in production you can omit `--reload` and supply `--host`/`--port` as needed.
+
+FastAPI automatically serves an interactive Swagger UI at `http://127.0.0.1:8000/docs` where you can experiment with the endpoints.
+
+## Endpoint reference
 
 ### `GET /courts`
 
-Returns JSON data describing the number of detected courts and players. Optionally pass an `image_path` query parameter to analyze a specific image.
+Analyze an image and return statistics about the detected courts and players.
+
+#### Query Parameters
+
+- `image_path` *(optional)* – Path to the image file to analyze. If omitted, the path defined by `Config.Paths.input_path()` in `main.py` is used.
+
+#### Response JSON
+
+- `total_courts` – Number of tennis courts detected in the image.
+- `total_people` – Total number of people detected.
+- `people_per_court` – A dictionary mapping court numbers to the number of players on that court.
 
 Example response:
 
@@ -38,4 +53,42 @@ Example response:
 }
 ```
 
-During automated tests the endpoint returns dummy data without running the heavy detection pipeline.
+During automated tests the endpoint returns simplified dummy data to avoid running the heavy computer vision pipeline. This happens when the environment variable `TESTING` is set to `1`.
+
+## Usage examples
+
+### Using `curl`
+
+```bash
+curl "http://127.0.0.1:8000/courts?image_path=images/input.png"
+```
+
+### Using Python `requests`
+
+```python
+import requests
+
+resp = requests.get("http://127.0.0.1:8000/courts", params={"image_path": "images/input.png"})
+print(resp.json())
+```
+
+### Calling the analysis function directly
+
+You can use the underlying logic without running the HTTP server:
+
+```python
+from api import analyze_image
+
+result = analyze_image("images/input.png")
+print(result)
+```
+
+## Customizing input images
+
+Edit `config.json` to change the default input location or any model parameters. The FastAPI server will pick up these settings on the next run.
+
+## Troubleshooting
+
+- Make sure all dependencies listed in `requirements.txt` are installed.
+- When running on a system without a camera or GPU you can still analyze static images by providing the `image_path` parameter.
+
