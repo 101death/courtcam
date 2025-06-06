@@ -2,6 +2,18 @@
 
 This project includes a small FastAPI application in `api.py` for retrieving tennis court statistics.
 
+codex/create-tennis-courts-api-with-documentation
+## Setup
+
+Create a virtual environment and install the required packages (which include
+`uvicorn`):
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
 ## Running the server
 
 Use Uvicorn to start the API in development mode:
