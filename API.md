@@ -35,7 +35,13 @@ Analyze an image and return statistics about the detected courts and players.
 
 #### Query Parameters
 
-- `image_path` *(optional)* – Path to the image file to analyze. If omitted, the path defined by `Config.Paths.input_path()` in `main.py` is used.
+- `image_path` *(optional)* – Path to the image file to analyze. If omitted, the
+  default input path from `config.json` (`images/input.png` by default) is used.
+- `use_camera` *(optional)* – Capture a new image using the Raspberry Pi camera
+  instead of providing a path. When this flag is enabled the API tries to take a
+  photo at the resolution specified under the `Camera` section of `config.json`.
+  The captured image is saved to `api_captures/capture.png` before analysis. If
+  no camera is detected the endpoint returns HTTP 400 with `"No camera detected"`.
 
 #### Response JSON
 
@@ -61,6 +67,7 @@ During automated tests the endpoint returns simplified dummy data to avoid runni
 
 ```bash
 curl "http://127.0.0.1:8000/courts?image_path=images/input.png"
+curl "http://127.0.0.1:8000/courts?use_camera=true"  # captures a new photo
 ```
 
 ### Using Python `requests`
@@ -70,6 +77,11 @@ import requests
 
 resp = requests.get("http://127.0.0.1:8000/courts", params={"image_path": "images/input.png"})
 print(resp.json())
+
+resp = requests.get("http://127.0.0.1:8000/courts", params={"use_camera": "true"})
+print(resp.json())
+# If no camera is connected this call returns:
+# {"detail": "No camera detected"}
 ```
 
 ### Calling the analysis function directly
