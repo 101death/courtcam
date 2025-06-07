@@ -37,11 +37,14 @@ Analyze an image and return statistics about the detected courts and players.
 
 - `image_path` *(optional)* – Path to the image file to analyze. If omitted, the
   default input path from `config.json` (`images/input.png` by default) is used.
+  The API also stores an annotated result image alongside the original using a
+  timestamped filename inside the `images/` directory.
 - `use_camera` *(optional)* – Capture a new image using the Raspberry Pi camera
   instead of providing a path. When this flag is enabled the API tries to take a
   photo at the resolution specified under the `Camera` section of `config.json`.
-  The captured image is saved to `api_captures/capture.png` before analysis. If
-  no camera is detected the endpoint returns HTTP 400 with `"No camera detected"`.
+  The captured photo is written to `images/capture_YYYYMMDD_HHMMSS.png` and the
+  processed output to `images/result_YYYYMMDD_HHMMSS.png`. If no camera is
+  detected the endpoint returns HTTP 400 with `"No camera detected"`.
 
 #### Response JSON
 
@@ -58,6 +61,9 @@ Example response:
   "people_per_court": {"1": 2, "2": 2}
 }
 ```
+
+Each request also appends a record of the input and output file paths to
+`api_captures/log.txt` so you can review how the API was used over time.
 
 During automated tests the endpoint returns simplified dummy data to avoid running the heavy computer vision pipeline. This happens when the environment variable `TESTING` is set to `1`.
 
@@ -125,7 +131,8 @@ You can use the underlying logic without running the HTTP server:
 ```python
 from api import analyze_image
 
-result = analyze_image("images/input.png")
+# Optionally provide an output_path to save an annotated image
+result = analyze_image("images/input.png", output_path="images/example_result.png")
 print(result)
 ```
 
