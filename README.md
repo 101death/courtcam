@@ -174,6 +174,8 @@ python main.py [options]
   `Done`/`Finish` complete the selection. The program loads the image and exits
   after saving the positions. The editor scales the image to fit within an
   800x600 window so the whole frame is visible even on smaller screens.
+- `--reset-courts`: Clear saved court positions (the entry remains in
+  `config.json`) so detection runs again on the next execution
 
 When court positions are provided or saved in `config.json`, court detection is skipped on subsequent runs.
 
