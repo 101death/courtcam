@@ -2781,6 +2781,11 @@ if __name__ == "__main__":
             action="store_true",
             help="Interactively select court corners via GUI"
         )
+        parser.add_argument(
+            "--reset-courts",
+            action="store_true",
+            help="Reset saved court positions so they will be detected again"
+        )
         # Add new arguments for merged functionality
         parser.add_argument("--install-ultralytics", action="store_true", help="Install the ultralytics package")
         parser.add_argument("--test-yolo", action="store_true", help="Run YOLO model test on the input image")
@@ -2836,7 +2841,21 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"Certificate installation failed: {str(e)}")
                 print("Try manually running the 'Install Certificates.command' script in your Python application folder.")
-        
+
+        if args.reset_courts:
+            Config.COURT_POSITIONS = []
+            try:
+                existing_cfg = {}
+                if os.path.exists(CONFIG_FILE):
+                    with open(CONFIG_FILE, "r") as f:
+                        existing_cfg = json.load(f)
+                existing_cfg["CourtPositions"] = Config.COURT_POSITIONS
+                with open(CONFIG_FILE, "w") as f:
+                    json.dump(existing_cfg, f, indent=4)
+                OutputManager.log("Court positions cleared", "INFO")
+            except Exception as e:
+                OutputManager.log(f"Could not reset court positions: {e}", "WARNING")
+
         # Update config based on arguments
         try:
             if args.input != Config.Paths.input_path():
