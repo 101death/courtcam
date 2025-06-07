@@ -62,6 +62,17 @@ Example response:
 }
 ```
 
+Example request with an image path:
+
+```bash
+curl "http://127.0.0.1:8000/courts?image_path=images/input.png"
+```
+
+Example request using the camera:
+
+```bash
+curl "http://127.0.0.1:8000/courts?use_camera=true"
+```
 Each request also appends a record of the input and output file paths to
 `api_captures/log.txt` so you can review how the API was used over time.
 
@@ -80,6 +91,12 @@ Retrieve basic status information about the host device and camera. This is usef
 - `camera_available` – `true` if a supported camera module is detected.
 - `camera_version` – `1` for legacy Picamera, `2` for Picamera2, or `null` if no camera libraries are available.
 
+Example request:
+
+```bash
+curl "http://127.0.0.1:8000/status"
+```
+
 ### `GET /court_count`
 
 Return only the number of tennis courts detected in the provided image or from the camera.
@@ -92,6 +109,18 @@ Return only the number of tennis courts detected in the provided image or from t
 #### Response JSON
 
 - `total_courts` – Number of detected courts.
+
+Example request specifying an image path:
+
+```bash
+curl "http://127.0.0.1:8000/court_count?image_path=images/input.png"
+```
+
+Example request using the camera:
+
+```bash
+curl "http://127.0.0.1:8000/court_count?use_camera=true"
+```
 
 ## Usage examples
 
